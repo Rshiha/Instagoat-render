@@ -1,0 +1,21 @@
+from .basic import BASIC_COMMANDS
+from .profile import PROFILE_COMMANDS
+from .fun import FUN_COMMANDS
+from .text import TEXT_COMMANDS
+from .economy import ECONOMY_COMMANDS
+from .social import SOCIAL_COMMANDS
+from .media import MEDIA_COMMANDS
+from .extra import EXTRA_COMMANDS, AUTO_REPLIES
+
+BOT_NAME = "Your Father Shihab"
+
+COMMANDS = {}
+
+COMMANDS.update(BASIC_COMMANDS)
+COMMANDS.update(PROFILE_COMMANDS)
+COMMANDS.update(FUN_COMMANDS)
+COMMANDS.update(TEXT_COMMANDS)
+COMMANDS.update(ECONOMY_COMMANDS)
+COMMANDS.update(SOCIAL_COMMANDS)
+COMMANDS.update(MEDIA_COMMANDS)
+COMMANDS.update(EXTRA_COMMANDS)
