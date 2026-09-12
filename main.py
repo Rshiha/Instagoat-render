@@ -501,10 +501,17 @@ def run_bot():
         return
 
     # =====================================================
-    # MESSAGE CACHE
+    # MESSAGE CACHE (Initial sync to ignore old messages)
     # =====================================================
 
     last_messages = {}
+    try:
+        initial_threads = cl.direct_threads(amount=20)
+        for thread in initial_threads:
+            if thread.messages:
+                last_messages[thread.id] = str(thread.messages[0].id)
+    except Exception:
+        pass
 
     # =====================================================
     # DM LOOP
@@ -665,3 +672,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port
     )
+    
