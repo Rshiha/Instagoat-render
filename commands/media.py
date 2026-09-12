@@ -1,9 +1,11 @@
+import os
 import yt_dlp
 
 def get_audio(song_name):
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'downloads/%(title)s.%(ext)s',
+        'cookiefile': 'cookies.txt',  # কুকিজ ফাইল যুক্ত করা হলো
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -20,10 +22,13 @@ def play(a, c):
         return "🎵 Usage: .play song name"
     
     song_name = " ".join(a)
-    file_path = get_audio(song_name)
     
-    # আপনার মেইন কোডে যদি ডিকশনারি রিটার্ন করার অপশন থাকে (অডিও পাঠানোর জন্য), 
-    # তবে সরাসরি ফাইল পাথ রিটার্ন করতে পারেন:
+    try:
+        file_path = get_audio(song_name)
+    except Exception as e:
+        print(f"AUDIO DOWNLOAD ERROR: {e}", flush=True)
+        return "❌ গান ডাউনলোড করতে সমস্যা হয়েছে। দয়া করে আবার চেষ্টা করুন।"
+    
     return {
         "type": "audio",
         "path": file_path,
@@ -31,7 +36,6 @@ def play(a, c):
         "cleanup": lambda: os.remove(file_path) if os.path.exists(file_path) else None
     }
 
-# Render-এর ImportError এড়ানোর জন্য এই ডিকশনারিটা জরুরি
 MEDIA_COMMANDS = {
     "play": play,
     "song": play,
