@@ -20,9 +20,19 @@ def play(a, c):
         return "🎵 Usage: .play song name"
     
     song_name = " ".join(a)
-    # Ekhane gaan download ba search korar function call korte hobe
     file_path = get_audio(song_name)
     
-    # Tarpor bot diye file path-ti send korte hobe
-    return f"🎵 Requested: {song_name}\n📂 File ready: {file_path}"
-  
+    # আপনার মেইন কোডে যদি ডিকশনারি রিটার্ন করার অপশন থাকে (অডিও পাঠানোর জন্য), 
+    # তবে সরাসরি ফাইল পাথ রিটার্ন করতে পারেন:
+    return {
+        "type": "audio",
+        "path": file_path,
+        "title": song_name,
+        "cleanup": lambda: os.remove(file_path) if os.path.exists(file_path) else None
+    }
+
+# Render-এর ImportError এড়ানোর জন্য এই ডিকশনারিটা জরুরি
+MEDIA_COMMANDS = {
+    "play": play,
+    "song": play,
+}
