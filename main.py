@@ -1,37 +1,38 @@
-import os, time, threading
+import os, threading
 from flask import Flask
 app = Flask(__name__)
 @app.route('/')
-def home(): return "Bot Live with Cookies!"
+def home(): return "Bot Live!"
 
 def run_bot():
-    print("--- Bot starting with SESSION ---")
-    SESSIONID = os.environ.get("IG_SESSIONID")
-    print(f"SESSION Found: {bool(SESSIONID)}")
-    if not SESSIONID:
-        print("ERROR: IG_SESSIONID missing!")
+    print("--- Bot starting ---")
+    sid = os.environ.get("IG_SESSIONID")
+    print(f"SESSION Found: {bool(sid)} Length: {len(sid) if sid else 0}")
+    if not sid:
+        print("ERROR: IG_SESSIONID missing in Render!")
         return
     try:
         from instagrapi import Client
         cl = Client()
-        cl.login_by_sessionid(SESSIONID)
-        print(f"Login Success with Cookies! ✅ User: {cl.username}")
-
+        # sessionid এর সামনে-পিছনে space থাকলে কেটে দিবে
+        cl.login_by_sessionid(sid.strip().strip('"').strip("'"))
+        print(f"Login Success! User: {cl.username} ✅")
+        import time
         last_id = None
         while True:
             try:
-                threads = cl.direct_threads(amount=5)
-                for t in threads:
-                    if t.messages and t.messages[0].user_id!= cl.user_id:
-                        m = t.messages[0]
-                        if last_id!= m.id and m.text.lower() in ["hi","hello","start","play"]:
-                            cl.direct_send("🐐 Welcome to Goat Game!\n1. Play\n2. Help", thread_ids=[t.id])
-                            last_id = m.id
+                for thread in cl.direct_threads(amount=5):
+                    if thread.messages and thread.messages[0].user_id!= cl.user_id:
+                        msg = thread.messages[0]
+                        if last_id!= msg.id:
+                            if "hi" in msg.text.lower() or "start" in msg.text.lower():
+                                cl.direct_send("🐐 Goat Game Started!\nType: 1 to Play", thread_ids=[thread.id])
+                                last_id = msg.id
                 time.sleep(5)
             except Exception as e:
                 print(f"Loop error: {e}"); time.sleep(10)
     except Exception as e:
-        print(f"Login Failed with Cookies: {e}")
+        print(f"LOGIN FAILED: {e}")
 
 threading.Thread(target=run_bot, daemon=True).start()
 if __name__ == "__main__":
