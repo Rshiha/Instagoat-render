@@ -41,7 +41,8 @@ def get_target_profile(args, ctx):
         return "❌ Profile information পাওয়া যায়নি."
 
 
-COMMANDS = {
+# এই ভ্যারিয়েবলটা মিসিং থাকার কারণেই Render-এ ImportError আসছিল
+PROFILE_COMMANDS = {
     "info": get_target_profile,
     "profile": get_target_profile,
     "uid": get_target_profile,
