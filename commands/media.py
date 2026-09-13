@@ -2,14 +2,15 @@ import os
 import glob
 import uuid
 import shutil
-import yt_dlp
 import tempfile
+import yt_dlp
 
-# FIX 1: Render এ downloads folder read-only হতে পারে, তাই /tmp use করো
+# Render এর জন্য /tmp use করো
 DOWNLOAD_DIR = "/tmp/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def find_cookie_file():
+    """Render Secret Files are available under /etc/secrets/<filename>. কিন্তু ওটা Read-only, তাই /tmp এ copy করতে হবে"""
     candidates = []
     env_cookie = os.getenv("YTDLP_COOKIES")
     if env_cookie:
@@ -20,17 +21,16 @@ def find_cookie_file():
     ])
     for path in candidates:
         if path and os.path.isfile(path):
-            # FIX 2: /etc/secrets read-only, তাই /tmp এ copy করতে হবে
             try:
                 if path.startswith("/etc/secrets"):
                     tmp_path = "/tmp/cookies.txt"
                     shutil.copyfile(path, tmp_path)
-                    print(f"🍪 yt-dlp cookies: enabled (copied to {tmp_path})", flush=True)
+                    print(f"🍪 yt-dlp cookies: enabled (copied)", flush=True)
                     return tmp_path
                 print(f"🍪 yt-dlp cookies: enabled ({path})", flush=True)
                 return path
             except Exception as e:
-                print(f"Cookie copy failed {e}", flush=True)
+                print(f"Cookie copy failed: {e}", flush=True)
                 return path
     print("🍪 yt-dlp cookies: not found; trying without cookies", flush=True)
     return None
@@ -43,7 +43,6 @@ def get_youtube_audio(song_name):
     output_template = os.path.join(DOWNLOAD_DIR, f"{job_id}.%(ext)s")
 
     ydl_opts = {
-        # FIX 3: Format - m4a allow করলে 'format not available' যাবে
         "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": output_template,
         "noplaylist": True,
@@ -54,18 +53,13 @@ def get_youtube_audio(song_name):
         "socket_timeout": 30,
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web"] # android add করো
+                "player_client": ["android", "web"]
             }
         },
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }],
     }
 
     cookie_file = find_cookie_file()
-    if cookie_file:
+    if cookie_file and os.path.exists(cookie_file):
         ydl_opts["cookiefile"] = cookie_file
 
     search_query = f"ytsearch1:{song_name}"
@@ -81,19 +75,16 @@ def get_youtube_audio(song_name):
                     return None, None
                 info = entries[0]
             title = info.get("title") or song_name
-
-            mp3_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{job_id}.mp3"))
-            if not mp3_files:
-                files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{job_id}.*"))
-                if not files:
-                    return None, None
-                return files[0], title
-            return mp3_files[0], title
-
+            files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{job_id}.*"))
+            if not files:
+                return None, None
+            return files[0], title
     except Exception as e:
         for path in glob.glob(os.path.join(DOWNLOAD_DIR, f"{job_id}.*")):
-            try: os.remove(path)
-            except OSError: pass
+            try:
+                os.remove(path)
+            except OSError:
+                pass
         print(f"AUDIO DOWNLOAD ERROR: {e}", flush=True)
         import traceback
         traceback.print_exc()
@@ -103,19 +94,15 @@ def play(a, c):
     if not a:
         return "🎵 Usage:.play song name"
     song_name = " ".join(a).strip()
-
     file_path, title = get_youtube_audio(song_name)
-
     if not file_path:
         return "❌ গানটি ডাউনলোড করা যায়নি। কিছুক্ষণ পরে আবার চেষ্টা করুন।"
-
     def cleanup():
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
         except OSError:
             pass
-
     return {
         "type": "audio",
         "path": file_path,
@@ -127,4 +114,4 @@ MEDIA_COMMANDS = {
     "play": play,
     "song": play,
     "music": play,
-    }
+        }
