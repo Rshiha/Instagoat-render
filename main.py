@@ -19,9 +19,7 @@ def home():
 
 @app.route("/health")
 def health():
-    return {"status":"online","bot":BOT_NAME,"username":BOT_USERNAME,
-            "commands":len(COMMANDS),"running":BOT_RUNNING,
-            "uptime":int(time.time()-START_TIME)}
+    return {"status":"online","bot":BOT_NAME,"username":BOT_USERNAME, "commands":len(COMMANDS),"running":BOT_RUNNING, "uptime":int(time.time()-START_TIME)}
 
 def send_text(cl, tid, text):
     if not text: return
@@ -29,7 +27,8 @@ def send_text(cl, tid, text):
         try:
             cl.direct_send(str(text)[i:i+1800], thread_ids=[tid])
             time.sleep(.5)
-        except Exception as e: print(f"❌ SEND ERROR: {e}", flush=True)
+        except Exception as e:
+            print(f"❌ SEND ERROR: {e}", flush=True)
 
 def get_user(cl, uid):
     try: return cl.user_info(uid)
@@ -39,9 +38,7 @@ def get_user(cl, uid):
 
 def make_context(cl, msg, thread):
     user = get_user(cl, msg.user_id)
-    return {"client":cl,"user":user,"user_id":str(msg.user_id),
-            "username":getattr(user,"username","Unknown"),
-            "thread_id":thread.id,"thread":thread,"message":msg}
+    return {"client":cl,"user":user,"user_id":str(msg.user_id), "username":getattr(user,"username","Unknown"), "thread_id":thread.id,"thread":thread,"message":msg}
 
 def get_replied_message_id(msg):
     r = getattr(msg, "reply", None)
@@ -63,7 +60,40 @@ def process_message(cl, thread, msg):
     ctx = make_context(cl,msg,thread)
     low = text.lower()
 
-    # Reply to a bot message with "uns" to unsend it
+    # === NEW: NUMBER SELECT SYSTEM FOR SONG ===
+    if text.isdigit():
+        try:
+            from commands.media import PENDING_SEARCH, get_youtube_audio_by_url
+            user_id = str(msg.user_id)
+            if user_id in PENDING_SEARCH:
+                idx = int(text) - 1
+                results = PENDING_SEARCH[user_id]
+                if 0 <= idx < len(results):
+                    selected = results[idx]
+                    del PENDING_SEARCH[user_id]
+                    send_text(cl, tid, f"⏳ Downloading: {selected['title']}...")
+                    file_path, title = get_youtube_audio_by_url(selected['id'], selected['title'])
+                    if not file_path:
+                        send_text(cl, tid, "❌ গানটি ডাউনলোড করা যায়নি।")
+                        return
+                    try:
+                        if hasattr(cl, "direct_send_file"):
+                            cl.direct_send_file(file_path, thread_ids=[tid])
+                            send_text(cl, tid, f"🎵 {title}")
+                        else:
+                            send_text(cl, tid, "⚠️ Audio send failed.")
+                    finally:
+                        try:
+                            if os.path.exists(file_path): os.remove(file_path)
+                        except: pass
+                    return
+                else:
+                    send_text(cl, tid, f"❌ 1 থেকে {len(results)} এর মধ্যে লিখো!")
+                    return
+        except Exception as e:
+            print(f"SELECT ERROR: {e}", flush=True)
+    # === END NEW ===
+
     if low == "uns":
         target_id = get_replied_message_id(msg)
         if not target_id:
@@ -83,7 +113,6 @@ def process_message(cl, thread, msg):
         return
 
     result = AUTO_REPLIES.get(low)
-
     if result is None and low in ("hi","hello","hey"):
         result = COMMANDS.get("hi",lambda a,c:None)([],ctx)
     elif result is None and low in ("menu","help"):
@@ -101,21 +130,19 @@ def process_message(cl, thread, msg):
                     traceback.print_exc(); result = "❌ Command error."
             else:
                 result = f"❌ Unknown command: `{cmd}`\n\n📚 Use `{PREFIX}menu`"
-
     if result is None: return
-
     if isinstance(result,dict) and result.get("type")=="audio":
         path=result.get("path"); title=result.get("title","Audio")
         try:
             if path and hasattr(cl,"direct_send_file"):
-                cl.direct_send_file(path,thread_ids=[tid]); return
+                cl.direct_send_file(path,thread_ids=[tid])
+                return
             send_text(cl,tid,f"🎵 {title}\n⚠️ Audio send failed.")
         finally:
             try:
                 if result.get("cleanup"): result["cleanup"]()
             except Exception: pass
         return
-
     if isinstance(result,dict) and result.get("type")=="image":
         path=result.get("path")
         try:
@@ -129,7 +156,6 @@ def process_message(cl, thread, msg):
                 if result.get("cleanup"): result["cleanup"]()
             except Exception: pass
         return
-
     send_text(cl,tid,result)
 
 def run_bot():
@@ -146,13 +172,12 @@ def run_bot():
         print(f"🎉 LOGIN SUCCESS: @{BOT_USERNAME}",flush=True)
     except Exception as e:
         print(f"❌ LOGIN FAILED: {e}",flush=True); traceback.print_exc(); return
-
     last={}
     try:
         for t in cl.direct_threads(amount=20):
             if t.messages: last[t.id]=str(t.messages[0].id)
-    except Exception as e: print(f"⚠️ Initial sync error: {e}",flush=True)
-
+    except Exception as e:
+        print(f"⚠️ Initial sync error: {e}",flush=True)
     while True:
         try:
             for thread in cl.direct_threads(amount=20):
@@ -171,7 +196,5 @@ def run_bot():
         time.sleep(3)
 
 threading.Thread(target=run_bot,daemon=True).start()
-
 if __name__=="__main__":
     app.run(host="0.0.0.0",port=int(os.environ.get("PORT","10000")))
-    
