@@ -1,8 +1,79 @@
 import random
-def joke(a,c): return random.choice(["😂 Computer went to doctor: it had a virus!","🤣 Programmer's favorite place? The coffee shop.","😎 My bot needs more processing."])
-def quote(a,c): return random.choice(["✨ Keep going.","🔥 Build. Test. Improve.","💫 Focus today."])
-def dice(a,c): return f"🎲 {random.randint(1,6)}"
-def truth(a,c): return random.choice(["❤️ Who do you text most?","😏 Biggest secret?","😂 Funniest mistake?"])
-def dare(a,c): return random.choice(["😎 Send a funny emoji.","😂 Say something random.","🔥 Make someone laugh."])
-def ball8(a,c): return random.choice(["🎱 Yes.","🎱 No.","🎱 Maybe.","🎱 Definitely!"])
-FUN_COMMANDS={"joke":joke,"quote":quote,"dice":dice,"truth":truth,"dare":dare,"8ball":ball8}
+
+
+def joke(a, c):
+    return random.choice([
+        "😂 Ekjon bollo: Bhai, tui eto chupchap keno?\nArekjon: Mobile-er battery 1%, tai amio low power mode-e achi! 🤣",
+        "🤣 Teacher: Homework kothay?\nStudent: Sir, Google Drive-e chilo... net chole jawar por theke khuje pachhi na! 😂",
+        "😂 Friend: Tui eto late korli keno?\nAmi: Rastay traffic chilo.\nFriend: Tui to hete ashchis!\nAmi: Hatar traffic chilo re! 🤣",
+        "😆 Ma: Phone ta rekhe porashona kor.\nAmi: Ma, phone chara Google-e porashona korbo kivabe? 😂",
+        "🤣 Friend: Tor prem kemon cholche?\nAmi: WiFi-er moto.\nFriend: Mane?\nAmi: Password jani na, signal-o pai na! 😂",
+        "😂 Doctor: Apnar ki problem?\nPatient: Mobile charge-e dilei amar ghum ashe.\nDoctor: Eta problem na, eta charger-er magic! 🤣",
+        "😎 Boss: Tumi office-e eto deri kore asho keno?\nEmployee: Sir, ami punctual... amar alarm punctual na! 😂",
+        "🤣 Baba: Tui porashona korchis?\nAmi: Haan baba.\nBaba: Ki porchis?\nAmi: Battery percentage... 5% theke 4% hoye gelo! 😂",
+        "😂 Friend: Tui single keno?\nAmi: Ami premium version.\nFriend: Mane?\nAmi: Sobai afford korte pare na! 🤣",
+        "😆 Bhai, tor phone eto gorom keno?\nBattery gorom na re, amar ex-er message dekhe phone-o jealous! 😂"
+    ])
+
+
+def quote(a, c):
+    return random.choice([
+        "✨ Jotoi tough hok, chesta korle ekdin parbei.",
+        "🔥 Ajke fail korle kalke aro bhalo kore try kor.",
+        "💫 Nijer upor bishash rakh, baki sob aste aste thik hoye jabe.",
+        "😎 Life short, tai unnecessary tension komao.",
+        "🌸 Choto choto step-ei boro success ashe.",
+        "💪 Har mene neya easy, kintu abar try korai real power.",
+        "❤️ Nijer value bujho, sobar approval-er dorkar nei."
+    ])
+
+
+def dice(a, c):
+    return f"🎲 Dice roll: {random.randint(1, 6)}"
+
+
+def truth(a, c):
+    return random.choice([
+        "❤️ Sotti kore bolo, kake shobcheye beshi text koro?",
+        "😏 Tomar biggest secret ki?",
+        "😂 Tomar jiboner shobcheye funny mistake konta?",
+        "🙈 Kake secretly like koro?",
+        "🤣 Shesh kobe mithha bole dhora kheyechho?",
+        "😎 Tomar shobcheye embarrassing moment konta?",
+        "❤️ Ekhon tomar mon-e kar kotha cholche?"
+    ])
+
+
+def dare(a, c):
+    return random.choice([
+        "😎 Ekhon ekta funny emoji pathao.",
+        "😂 Group-e ekta random kotha bolo.",
+        "🔥 10 second-er moddhe ekjonke hashao.",
+        "🤣 Nijer somporke ekta funny fact bolo.",
+        "😏 Jar sathe kotha bolte bhalo lage take 'Hi' bolo.",
+        "😂 Ekhon sudhu emoji diye ekta message dao.",
+        "🔥 Ekta funny status lekho."
+    ])
+
+
+def ball8(a, c):
+    return random.choice([
+        "🎱 Haan, definitely!",
+        "🎱 Na, chance kom.",
+        "🎱 Maybe... dekha jak! 😏",
+        "🎱 100% Haan! 🔥",
+        "🎱 Amar mone hoy Haan ❤️",
+        "🎱 Nope 😂",
+        "🎱 Future ekhono secret! 🔮",
+        "🎱 Definitely! 😎"
+    ])
+
+
+FUN_COMMANDS = {
+    "joke": joke,
+    "quote": quote,
+    "dice": dice,
+    "truth": truth,
+    "dare": dare,
+    "8ball": ball8
+      }
