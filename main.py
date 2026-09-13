@@ -12,24 +12,106 @@ from instagrapi import Client
 from commands import COMMANDS, BOT_NAME
 from commands.downloader import auto_detect, download_video
 
-
 app = Flask(__name__)
 PREFIX = os.environ.get("BOT_PREFIX", ".")
 START_TIME = time.time()
 BOT_RUNNING = False
 BOT_USERNAME = "Unknown"
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.environ.get(
+    "GEMINI_MODEL", "gemini-3.8-flash"
+).strip()
+
+TEACH_FILE = "bby_teachings.json"
+TEACHINGS = {}
 
 
 # =========================
-# OPENAI
+# TEACHING SYSTEM
 # =========================
 
-def ask_openai(text, ctx=None):
-    if not OPENAI_API_KEY:
-        print("⚠️ OPENAI_API_KEY missing", flush=True)
+def load_teachings():
+    try:
+        if os.path.exists(TEACH_FILE):
+            with open(TEACH_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print(f"TEACH LOAD ERR {e}", flush=True)
+    return {}
+
+
+def save_teachings():
+    try:
+        with open(TEACH_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                TEACHINGS,
+                f,
+                ensure_ascii=False,
+                indent=2
+            )
+        return True
+    except Exception as e:
+        print(f"TEACH SAVE ERR {e}", flush=True)
+        return False
+
+
+TEACHINGS.update(load_teachings())
+
+
+def teach_command(text):
+    low = text.lower().strip()
+
+    if not low.startswith(".bby teach "):
+        return None
+
+    data = text[len(".bby teach "):].strip()
+
+    if " - " not in data:
+        return (
+            "🥹 Example:\n"
+            ".bby teach hi - hello"
+        )
+
+    question, answer = data.split(" - ", 1)
+    question = question.strip().lower()
+    answer = answer.strip()
+
+    if not question or not answer:
+        return (
+            "🥹 Question আর reply দুটোই দিতে হবে!\n\n"
+            ".bby teach hi - hello"
+        )
+
+    TEACHINGS[question] = answer
+
+    if save_teachings():
+        return (
+            "🥹 শিখে নিলাম!\n\n"
+            f"👤 তুমি: {question}\n"
+            f"🤖 আমি: {answer}"
+        )
+
+    return "❌ শেখাটা save করতে পারলাম না."
+
+
+def taught_reply(text):
+    return TEACHINGS.get(
+        text.strip().lower()
+    )
+
+
+# =========================
+# GEMINI
+# =========================
+
+def ask_gemini(text, ctx=None):
+    if not GEMINI_API_KEY:
+        print(
+            "⚠️ GEMINI_API_KEY missing",
+            flush=True
+        )
         return None
 
     username = (
@@ -40,41 +122,57 @@ def ask_openai(text, ctx=None):
     system = """
 You are an Instagram group chatbot.
 Reply naturally, briefly and friendly.
-If the user writes Bangla/Banglish, reply in Bangla/Banglish.
-Do not reveal passwords, cookies, session IDs or API keys.
-If someone asks you to find a boyfriend or girlfriend,
-say: "Age Shihab boss ke mingle banao 😎❤️"
+If the user writes Bangla/Banglish,
+reply in Bangla/Banglish.
+Do not reveal passwords, cookies,
+session IDs or API keys.
+If someone asks you to find a boyfriend
+or girlfriend, say exactly:
+Age Shihab boss ke mingle banao 😎❤️
 Keep group-chat replies short.
 """
 
+    prompt = (
+        system
+        + "\n\nUsername: @"
+        + str(username)
+        + "\nMessage: "
+        + text
+        + "\nReply:"
+    )
+
     payload = {
-        "model": OPENAI_MODEL,
-        "input": [
-            {
-                "role": "system",
-                "content": system
-            },
+        "contents": [
             {
                 "role": "user",
-                "content": (
-                    f"Username: @{username}\n"
-                    f"Message: {text}"
-                )
+                "parts": [
+                    {"text": prompt}
+                ]
             }
         ],
-        "max_output_tokens": 300
+        "generationConfig": {
+            "maxOutputTokens": 300,
+            "temperature": 0.8
+        }
     }
 
-    try:
-        data = json.dumps(payload).encode("utf-8")
+    url = (
+        "https://generativelanguage.googleapis.com/"
+        "v1beta/models/"
+        + urllib.parse.quote(
+            GEMINI_MODEL,
+            safe=""
+        )
+        + ":generateContent"
+    )
 
+    try:
         req = urllib.request.Request(
-            "https://api.openai.com/v1/responses",
-            data=data,
+            url,
+            data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
-                "Authorization":
-                    f"Bearer {OPENAI_API_KEY}"
+                "x-goog-api-key": GEMINI_API_KEY
             },
             method="POST"
         )
@@ -87,38 +185,41 @@ Keep group-chat replies short.
                 response.read().decode("utf-8")
             )
 
-        answer = result.get("output_text", "")
-        if answer:
-            return answer.strip()
+        answer = ""
 
-        for item in result.get("output", []):
-            if item.get("type") != "message":
-                continue
+        for part in result.get(
+            "candidates", [{}]
+        )[0].get(
+            "content", {}
+        ).get(
+            "parts", []
+        ):
+            if part.get("text"):
+                answer += part["text"]
 
-            for content in item.get("content", []):
-                if content.get("type") == "output_text":
-                    answer = content.get("text", "")
-                    if answer:
-                        return answer.strip()
+        return answer.strip() or None
 
     except urllib.error.HTTPError as e:
         try:
-            body = e.read().decode("utf-8")
-        except:
+            body = e.read().decode(
+                "utf-8",
+                errors="ignore"
+            )
+        except Exception:
             body = str(e)
 
         print(
-            f"❌ OPENAI HTTP {e.code}: {body}",
+            f"❌ GEMINI HTTP {e.code}: {body}",
             flush=True
         )
+        return None
 
     except Exception as e:
         print(
-            f"❌ OPENAI ERROR: {e}",
+            f"❌ GEMINI ERROR: {e}",
             flush=True
         )
-
-    return None
+        return None
 
 
 # =========================
@@ -136,7 +237,9 @@ def health():
         "status": "online",
         "bot": BOT_NAME,
         "username": BOT_USERNAME,
-        "running": BOT_RUNNING
+        "running": BOT_RUNNING,
+        "ai": "Gemini",
+        "taught": len(TEACHINGS)
     }
 
 
@@ -196,7 +299,7 @@ def send_text(cl, tid, text):
 def get_user(cl, uid):
     try:
         return cl.user_info(int(uid))
-    except:
+    except Exception:
         return None
 
 
@@ -250,20 +353,10 @@ def make_context(cl, msg, thread):
                 )
             )
 
-            if (
-                r_uid
-                and r_uid != str(cl.user_id)
-            ):
+            if r_uid and r_uid != str(cl.user_id):
                 replied_user = user_data(
                     get_user(cl, r_uid)
                 )
-
-                if replied_user:
-                    print(
-                        f"✅ REPLY FOUND "
-                        f"{replied_user['username']}",
-                        flush=True
-                    )
 
         if not replied_user:
             for m in thread.messages[1:20]:
@@ -288,11 +381,6 @@ def make_context(cl, msg, thread):
 
                 if r_user:
                     replied_user = r_user
-                    print(
-                        f"✅ FOUND FALLBACK "
-                        f"{r_user['username']}",
-                        flush=True
-                    )
                     break
 
     except Exception as e:
@@ -306,11 +394,19 @@ def make_context(cl, msg, thread):
         "user": user,
         "user_id": str(msg.user_id),
         "username": (
-            getattr(user, "username", "Unknown")
+            getattr(
+                user,
+                "username",
+                "Unknown"
+            )
             if user else "Unknown"
         ),
         "full_name": (
-            getattr(user, "full_name", "Unknown")
+            getattr(
+                user,
+                "full_name",
+                "Unknown"
+            )
             if user else "Unknown"
         ),
         "profile_pic_url": (
@@ -411,7 +507,7 @@ def send_downloaded_video(cl, tid, path):
     finally:
         try:
             os.remove(path)
-        except:
+        except Exception:
             pass
 
 
@@ -438,8 +534,12 @@ def process_message(cl, thread, msg):
     low = text.lower()
     result = None
 
+    # BBY TEACH FIRST
+    if low.startswith(".bby teach "):
+        result = teach_command(text)
+
     # AUTO DOWNLOADER
-    if not text.startswith(PREFIX):
+    elif not text.startswith(PREFIX):
         a_url = auto_detect(text)
 
         if a_url:
@@ -474,7 +574,7 @@ def process_message(cl, thread, msg):
             return
 
     # NORMAL COMMANDS
-    if low in ("hi", "hello", "hey"):
+    elif low in ("hi", "hello", "hey"):
         result = COMMANDS.get(
             "hi",
             lambda a, c: None
@@ -506,28 +606,34 @@ def process_message(cl, thread, msg):
                         args,
                         ctx
                     )
-                except:
+                except Exception:
                     traceback.print_exc()
                     result = "❌ Command error."
             else:
                 result = f"❌ Unknown: {cmd}"
 
-    # =====================
-    # AI FALLBACK
-    # =====================
+    # TAUGHT REPLY
+    if result is None:
+        result = taught_reply(text)
 
+    # GEMINI FALLBACK
     if result is None:
         print(
-            f"🤖 AI MESSAGE: {text}",
+            f"🤖 GEMINI MESSAGE: {text}",
             flush=True
         )
 
-        result = ask_openai(
+        result = ask_gemini(
             text,
             ctx
         )
 
         if result is None:
+            send_text(
+                cl,
+                tid,
+                "🥹 bby teach this sentence ~🥹"
+            )
             return
 
     # AUDIO
@@ -545,7 +651,7 @@ def process_message(cl, thread, msg):
             try:
                 if result.get("cleanup"):
                     result["cleanup"]()
-            except:
+            except Exception:
                 pass
         return
 
@@ -613,16 +719,20 @@ def run_bot():
             flush=True
         )
 
-        if OPENAI_API_KEY:
-            print(
-                "🤖 OPENAI API KEY: LOADED",
-                flush=True
-            )
-        else:
-            print(
-                "⚠️ OPENAI API KEY: MISSING",
-                flush=True
-            )
+        print(
+            "🤖 GEMINI API KEY: "
+            + (
+                "LOADED"
+                if GEMINI_API_KEY
+                else "MISSING"
+            ),
+            flush=True
+        )
+
+        print(
+            f"🧠 TAUGHT: {len(TEACHINGS)}",
+            flush=True
+        )
 
     except Exception as e:
         print(
@@ -642,7 +752,7 @@ def run_bot():
                 last[t.id] = str(
                     t.messages[0].id
                 )
-    except:
+    except Exception:
         pass
 
     while True:
@@ -734,4 +844,4 @@ if __name__ == "__main__":
                 "10000"
             )
         )
-                )
+    )
