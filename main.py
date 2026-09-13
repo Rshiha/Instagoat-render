@@ -473,7 +473,315 @@ def process_message(client, thread, message):
     else:
         send_message(client, thread_id, result)
 
+# =========================
+# INSTAGRAM BOT
+# =========================
 
+def is_instagram_403(error):
+    """Instagram 403 / 1404006 type error detect"""
+    text = str(error).lower()
+
+    return (
+        "1404006" in text
+        or "item_ack" in text
+        or "clientforbiddenerror" in text
+        or "status_code\":\"403" in text
+        or "403" in text
+    )
+
+
+def run_bot():
+    global BOT_RUNNING
+    global BOT_USERNAME
+
+    session_id = os.getenv("IG_SESSIONID")
+
+    if not session_id:
+        print("❌ IG_SESSIONID missing", flush=True)
+        return
+
+    # URL encoded session হলে automatically decode করবে
+    session_id = urllib.parse.unquote(
+        session_id.strip().strip('"').strip("'")
+    )
+
+    client = None
+
+    # =========================
+    # LOGIN
+    # =========================
+
+    try:
+        client = Client()
+
+        # Request-এর মধ্যে একটু delay রাখবে
+        client.delay_range = [3, 7]
+
+        # Saved device settings
+        if os.path.exists(SETTINGS_FILE):
+            try:
+                client.load_settings(SETTINGS_FILE)
+                print("⚙️ Loaded saved device settings", flush=True)
+            except Exception as e:
+                print(f"⚠️ SETTINGS LOAD SKIPPED: {e}", flush=True)
+
+        print("🔐 Instagram session login হচ্ছে...", flush=True)
+
+        client.login_by_sessionid(session_id)
+
+        # Login successful হলে settings save
+        try:
+            client.dump_settings(SETTINGS_FILE)
+        except Exception as e:
+            print(f"⚠️ SETTINGS SAVE ERR: {e}", flush=True)
+
+        BOT_USERNAME = getattr(client, "username", "Unknown")
+        BOT_RUNNING = True
+
+        print(f"🎉 LOGIN SUCCESS: @{BOT_USERNAME}", flush=True)
+        print("🤖 Gemini: DISABLED", flush=True)
+        print(
+            "🍪 YouTube Cookies:",
+            "LOADED" if COOKIE_FILE else "MISSING",
+            flush=True
+        )
+        print(f"🧠 TAUGHT: {len(TEACHINGS)}", flush=True)
+        print(
+            "🎵 Music selection:",
+            "ENABLED" if select_song else "DISABLED",
+            flush=True
+        )
+        print(f"⏱️ Poll interval: {POLL_INTERVAL}s", flush=True)
+
+    except Exception as e:
+        BOT_RUNNING = False
+        print(f"❌ LOGIN FAIL: {repr(e)}", flush=True)
+
+        if is_instagram_403(e):
+            print(
+                "⚠️ Instagram session/request rejected (403/1404006).",
+                flush=True
+            )
+            print(
+                "⚠️ Retry করার আগে session/account restriction check করো.",
+                flush=True
+            )
+
+        return
+
+    # =========================
+    # INITIAL DM LOAD
+    # =========================
+
+    last_messages = {}
+
+    try:
+        print("📨 Loading initial DM threads...", flush=True)
+
+        threads = client.direct_threads(
+            amount=20,
+            thread_message_limit=25
+        )
+
+        for thread in threads:
+            try:
+                if thread.messages:
+                    last_messages[thread.id] = str(
+                        thread.messages[0].id
+                    )
+            except Exception:
+                continue
+
+        print(
+            f"✅ Initial DM loaded: {len(last_messages)} threads",
+            flush=True
+        )
+
+    except Exception as e:
+        # Initial DM fail হলে bot crash করবে না
+        print(f"⚠️ INITIAL DM LOAD FAILED: {repr(e)}", flush=True)
+
+        if is_instagram_403(e):
+            print(
+                "⚠️ Instagram 403/1404006 detected.",
+                flush=True
+            )
+            print(
+                "⏳ DM polling temporarily paused for 60 seconds.",
+                flush=True
+            )
+
+            # একই error বারবার instant print করবে না
+            time.sleep(60)
+
+        else:
+            time.sleep(15)
+
+    # =========================
+    # DM POLLING
+    # =========================
+
+    errors = 0
+    last_403_log = 0
+
+    while True:
+
+        try:
+            threads = client.direct_threads(
+                amount=20,
+                thread_message_limit=25
+            )
+
+            errors = 0
+
+            for thread in threads:
+
+                try:
+                    if not thread.messages:
+                        continue
+
+                    message = thread.messages[0]
+
+                    message_id = str(
+                        getattr(message, "id", "")
+                    )
+
+                    user_id = str(
+                        getattr(message, "user_id", "")
+                    )
+
+                    if not message_id:
+                        continue
+
+                    # নিজের message ignore
+                    if user_id == str(client.user_id):
+                        continue
+
+                    # পুরোনো message ignore
+                    if last_messages.get(thread.id) == message_id:
+                        continue
+
+                    last_messages[thread.id] = message_id
+
+                    text = (
+                        getattr(message, "text", "") or ""
+                    ).strip()
+
+                    if not text:
+                        continue
+
+                    print(
+                        f"📩 {text}",
+                        flush=True
+                    )
+
+                    process_message(
+                        client,
+                        thread,
+                        message
+                    )
+
+                except Exception as message_error:
+                    print(
+                        f"⚠️ MESSAGE PROCESS ERR: "
+                        f"{repr(message_error)}",
+                        flush=True
+                    )
+
+        except Exception as e:
+
+            errors += 1
+            error_text = str(e)
+
+            # =========================
+            # 403 / 1404006
+            # =========================
+
+            if is_instagram_403(e):
+
+                now = time.time()
+
+                # প্রতি error-এ FULL ERROR spam করবে না
+                if now - last_403_log >= 60:
+                    print(
+                        f"⚠️ Instagram 403/1404006: {repr(e)}",
+                        flush=True
+                    )
+
+                    print(
+                        "⚠️ DM request Instagram reject করছে.",
+                        flush=True
+                    )
+
+                    last_403_log = now
+
+                # Exponential-ish backoff
+                wait = min(
+                    600,
+                    60 * max(1, min(errors, 10))
+                )
+
+                print(
+                    f"⏳ DM retry হবে {wait}s পরে "
+                    f"(attempt {errors})",
+                    flush=True
+                )
+
+                time.sleep(wait)
+
+                continue
+
+            # =========================
+            # OTHER ERRORS
+            # =========================
+
+            print(
+                f"🔍 FULL ERROR: {repr(e)}",
+                flush=True
+            )
+
+            wait = min(
+                120,
+                10 + (errors * 10)
+            )
+
+            print(
+                f"⚠️ DM loop error — retry {wait}s পরে",
+                flush=True
+            )
+
+            time.sleep(wait)
+
+        # Normal polling interval
+        time.sleep(POLL_INTERVAL)
+
+
+# =========================
+# START
+# =========================
+
+threading.Thread(
+    target=run_bot,
+    daemon=True
+).start()
+
+
+if __name__ == "__main__":
+    app.run(
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "10000"))
+    )
+threading.Thread(
+    target=run_bot,
+    daemon=True
+).start()
+
+
+if __name__ == "__main__":
+    app.run(
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "10000"))
+        )
 # =========================
 # INSTAGRAM BOT
 # =========================
@@ -507,111 +815,6 @@ def run_bot():
 
         try:
             client.dump_settings(SETTINGS_FILE)
-        except Exception as e:
-            print(f"SETTINGS SAVE ERR: {e}", flush=True)
-
-        BOT_USERNAME = getattr(client, "username", "Unknown")
-        BOT_RUNNING = True
-
-        print(f"🎉 LOGIN @{BOT_USERNAME}", flush=True)
-        print("🤖 Gemini: DISABLED", flush=True)
-        print("🍪 YouTube Cookies:", "LOADED" if COOKIE_FILE else "MISSING", flush=True)
-        print(f"🧠 TAUGHT: {len(TEACHINGS)}", flush=True)
-        print("🎵 Music selection:", "ENABLED" if select_song else "DISABLED", flush=True)
-        print(f"⏱️ Poll interval: {POLL_INTERVAL}s", flush=True)
-
-    except Exception as e:
-        print(f"LOGIN FAIL: {e}", flush=True)
-        return
-
-    last_messages = {}
-
-    try:
-        threads = client.direct_threads(amount=20, thread_message_limit=25)
-
-        for thread in threads:
-            if thread.messages:
-                last_messages[thread.id] = str(thread.messages[0].id)
-
-    except Exception as e:
-        print(f"INITIAL DM ERR: {e}", flush=True)
-
-    errors = 0
-
-    while True:
-        try:
-            threads = client.direct_threads(amount=20, thread_message_limit=25)
-            errors = 0
-
-            for thread in threads:
-                if not thread.messages:
-                    continue
-
-                message = thread.messages[0]
-                message_id = str(getattr(message, "id", ""))
-                user_id = str(getattr(message, "user_id", ""))
-
-                if not message_id:
-                    continue
-
-                if user_id == str(client.user_id):
-                    continue
-
-                if last_messages.get(thread.id) == message_id:
-                    continue
-
-                last_messages[thread.id] = message_id
-
-                text = (getattr(message, "text", "") or "").strip()
-
-                if not text:
-                    continue
-
-                print(f"📩 {text}", flush=True)
-                process_message(client, thread, message)
-
-        except Exception as e:
-            errors += 1
-            error_text = str(e)
-            low_err = error_text.lower()
-
-            # 🔍 Exact error dekhar jonno — pura error print hobe
-            print(f"🔍 FULL ERROR: {repr(e)}", flush=True)
-
-            if (
-                "1404006" in error_text
-                or "item_ack" in error_text
-                or "403" in error_text
-                or "challenge_required" in low_err
-                or "please wait" in low_err
-                or "rate limit" in low_err
-            ):
-                wait = min(300, 30 + errors * 20)
-
-                print(
-                    f"⚠️ Instagram rate-limit/403 — retry {wait}s "
-                    f"(attempt {errors})",
-                    flush=True
-                )
-
-                time.sleep(wait)
-
-                if errors >= 5:
-                    print(
-                        "⚠️ বারবার fail হচ্ছে — session/device flagged হয়ে "
-                        "থাকতে পারে, session refresh বিবেচনা করো",
-                        flush=True
-                    )
-            else:
-                print(f"LOOP ERR: {e}", flush=True)
-                time.sleep(10)
-
-        time.sleep(POLL_INTERVAL)
-
-
-# =========================
-# START
-# =========================
 
 threading.Thread(target=run_bot, daemon=True).start()
 
