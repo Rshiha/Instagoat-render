@@ -6,7 +6,6 @@ import urllib.parse
 from flask import Flask
 from instagrapi import Client
 from commands import COMMANDS, AUTO_REPLIES, BOT_NAME
-
 app = Flask(__name__)
 PREFIX = os.environ.get("BOT_PREFIX", ".")
 START_TIME = time.time()
@@ -23,6 +22,18 @@ def health():
 
 def send_text(cl, tid, text):
     if not text: return
+    # PHOTO SYSTEM ADDED
+    if isinstance(text, dict) and "photo" in text:
+        try:
+            cl.direct_send_photo(text["photo"], thread_ids=[tid])
+            time.sleep(0.5)
+            if text.get("caption"):
+                cl.direct_send(text["caption"], thread_ids=[tid])
+            return
+        except Exception as e:
+            print(f"❌ PHOTO SEND ERROR: {e}", flush=True)
+            text = text.get("caption", "❌ Photo send fail")
+
     for i in range(0, len(str(text)), 1800):
         try:
             cl.direct_send(str(text)[i:i+1800], thread_ids=[tid])
@@ -36,7 +47,47 @@ def get_user(cl, uid):
 
 def make_context(cl, msg, thread):
     user = get_user(cl, msg.user_id)
-    return {"client":cl,"user":user,"user_id":str(msg.user_id), "username":getattr(user,"username","Unknown"), "thread_id":thread.id,"thread":thread,"message":msg}
+
+    # REPLY USER SYSTEM ADDED - EITAI MAIN FIX
+    replied_user = None
+    try:
+        # Insta te reply korle thread e 2nd message tai replied message
+        if len(thread.messages) > 1:
+            # Jodi reply hoy, ager message ta replied
+            prev_msg = thread.messages[1]
+            if str(prev_msg.user_id)!= str(cl.user_id):
+                r_user = get_user(cl, prev_msg.user_id)
+                if r_user:
+                    replied_user = {
+                        "user_id": str(r_user.pk),
+                        "username": r_user.username,
+                        "full_name": r_user.full_name,
+                        "profile_pic_url": str(r_user.profile_pic_url),
+                        "followers": r_user.follower_count,
+                        "following": r_user.following_count,
+                        "posts": r_user.media_count,
+                        "bio": r_user.biography
+                    }
+    except Exception as e:
+        print(f"Reply parse error: {e}")
+
+    return {
+        "client":cl,
+        "user":user,
+        "user_id":str(msg.user_id),
+        "username":getattr(user,"username","Unknown") if user else "Unknown",
+        "full_name":getattr(user,"full_name","Unknown") if user else "Unknown",
+        "profile_pic_url": str(getattr(user,"profile_pic_url","")) if user else "",
+        "followers": getattr(user,"follower_count", 0) if user else 0,
+        "following": getattr(user,"following_count", 0) if user else 0,
+        "posts": getattr(user,"media_count", 0) if user else 0,
+        "bio": getattr(user,"biography","") if user else "",
+        "start_time": START_TIME,
+        "thread_id":thread.id,
+        "thread":thread,
+        "message":msg,
+        "replied_user": replied_user
+    }
 
 def process_message(cl, thread, msg):
     text = (getattr(msg,"text","") or "").strip()
@@ -45,7 +96,6 @@ def process_message(cl, thread, msg):
     ctx = make_context(cl,msg,thread)
     low = text.lower()
 
-    # ====== EKHANE BOSHAISIIII - NUMBER 1,2,3 SYSTEM ======
     if text.strip().isdigit():
         try:
             from commands.media import PENDING_SEARCH, get_youtube_audio_by_url
@@ -62,8 +112,7 @@ def process_message(cl, thread, msg):
                     if not file_path:
                         send_text(cl, tid, "❌ ডাউনলোড Fail! Cookies Expired!")
                         return
-                    try:
-                        cl.direct_send_file(file_path, thread_ids=[tid])
+                    try: cl.direct_send_file(file_path, thread_ids=[tid])
                     finally:
                         try: os.remove(file_path)
                         except: pass
@@ -71,7 +120,6 @@ def process_message(cl, thread, msg):
         except Exception as e:
             print(f"SELECT ERROR: {e}", flush=True)
             traceback.print_exc()
-    # ====== END ======
 
     result = None
     if low in ("hi","hello","hey"):
@@ -88,9 +136,7 @@ def process_message(cl, thread, msg):
             if cmd in COMMANDS:
                 try: result = COMMANDS[cmd](args,ctx)
                 except: traceback.print_exc(); result = "❌ Command error."
-            else:
-                result = f"❌ Unknown: {cmd}"
-
+            else: result = f"❌ Unknown: {cmd}"
     if result is None: return
     if isinstance(result,dict) and result.get("type")=="audio":
         path=result.get("path")
