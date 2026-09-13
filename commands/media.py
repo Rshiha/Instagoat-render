@@ -1,60 +1,381 @@
 import os
+import re
+import shutil
+import subprocess
+import tempfile
+from urllib.parse import urlparse
+
 import requests
 
-def get_saavn_audio(song_name):
-    # JioSaavn API ব্যবহার করে গান সার্চ করা (কোনো কুকিজ বা ইউটিউব প্রটেকশন নেই)
-    search_url = f"https://jiosaavn-api-private-zeta.vercel.app/search/songs?query={song_name}"
-    response = requests.get(search_url).json()
-    
-    if response.get("success") and response.get("data", {}).get("results"):
-        song_data = response["data"]["results"][0]
-        title = song_data.get("name", song_name)
-        
-        # সবথেকে ভালো কোয়ালিটির অডিও লিংক বের করা
-        download_url = None
-        for quality in song_data.get("downloadUrl", []):
-            if quality.get("quality") == "320kbps" or quality.get("quality") == "160kbps":
-                download_url = quality.get("link")
-                break
-        
-        if not download_url and song_data.get("downloadUrl"):
-            download_url = song_data["downloadUrl"][-1].get("link")
-            
-        if download_url:
-            # অডিও ফাইলটি সাময়িকভাবে ডাউনলোড করে নেওয়া
-            audio_response = requests.get(download_url)
-            file_path = f"downloads/{title}.mp3"
-            os.makedirs("downloads", exist_ok=True)
-            
-            with open(file_path, "wb") as f:
-                f.write(audio_response.content)
-            return file_path, title
-            
-    return None, None
 
-def play(a, c):
-    if not a:
-        return "🎵 Usage: .play song name"
-    
-    song_name = " ".join(a)
-    
+# =========================================================
+# CONFIG
+# =========================================================
+
+DOWNLOAD_DIR = os.path.join(
+    tempfile.gettempdir(),
+    "instagoat_audio"
+)
+
+os.makedirs(
+    DOWNLOAD_DIR,
+    exist_ok=True
+)
+
+
+# =========================================================
+# CLEAN FILENAME
+# =========================================================
+
+def clean_filename(name):
+
+    name = re.sub(
+        r'[\\/:*?"<>|]+',
+        "_",
+        name
+    )
+
+    name = name.strip()
+
+    if not name:
+        name = "audio"
+
+    return name[:100]
+
+
+# =========================================================
+# DOWNLOAD AUDIO
+# =========================================================
+
+def download_audio(query):
+
+    """
+    Downloads audio using yt-dlp.
+
+    Works with a search query such as:
+        .play Tere Liye Atif Aslam
+
+    or a supported URL.
+
+    Use only content you are allowed to download.
+    """
+
+    output_template = os.path.join(
+        DOWNLOAD_DIR,
+        "%(title)s.%(ext)s"
+    )
+
+    # -----------------------------------------------------
+    # Search or URL
+    # -----------------------------------------------------
+
+    if (
+        query.startswith("http://")
+        or query.startswith("https://")
+    ):
+
+        source = query
+
+    else:
+
+        source = (
+            "ytsearch1:"
+            + query
+        )
+
+
+    # -----------------------------------------------------
+    # yt-dlp
+    # -----------------------------------------------------
+
+    command = [
+        "yt-dlp",
+
+        "--no-playlist",
+
+        "--no-warnings",
+
+        "--quiet",
+
+        "--restrict-filenames",
+
+        "-x",
+
+        "--audio-format",
+        "mp3",
+
+        "--audio-quality",
+        "128K",
+
+        "-o",
+        output_template,
+
+        source
+    ]
+
+
     try:
-        file_path, title = get_saavn_audio(song_name)
-        if not file_path:
-            return "❌ গানটি খুঁজে পাওয়া যায়নি। অন্য নাম দিয়ে চেষ্টা করুন।"
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+
+
+    except FileNotFoundError:
+
+        raise RuntimeError(
+            "yt-dlp is not installed."
+        )
+
+
+    except subprocess.TimeoutExpired:
+
+        raise RuntimeError(
+            "Download timeout."
+        )
+
+
+    # -----------------------------------------------------
+    # Error
+    # -----------------------------------------------------
+
+    if result.returncode != 0:
+
+        error = (
+            result.stderr
+            or result.stdout
+            or "Unknown yt-dlp error"
+        )
+
+        print(
+            f"❌ YT-DLP ERROR: {error}",
+            flush=True
+        )
+
+        raise RuntimeError(
+            "Song download failed."
+        )
+
+
+    # -----------------------------------------------------
+    # Find MP3
+    # -----------------------------------------------------
+
+    files = []
+
+    try:
+
+        for filename in os.listdir(
+            DOWNLOAD_DIR
+        ):
+
+            path = os.path.join(
+                DOWNLOAD_DIR,
+                filename
+            )
+
+            if (
+                os.path.isfile(path)
+                and filename.lower().endswith(
+                    ".mp3"
+                )
+            ):
+
+                files.append(path)
+
+    except Exception:
+
+        pass
+
+
+    if not files:
+
+        raise RuntimeError(
+            "MP3 file was not created."
+        )
+
+
+    # Newest file
+    files.sort(
+        key=os.path.getmtime,
+        reverse=True
+    )
+
+    return files[0]
+
+
+# =========================================================
+# GET TITLE
+# =========================================================
+
+def get_title(path):
+
+    try:
+
+        name = os.path.basename(
+            path
+        )
+
+        if name.lower().endswith(
+            ".mp3"
+        ):
+
+            name = name[:-4]
+
+        return name.replace(
+            "_",
+            " "
+        )
+
+    except Exception:
+
+        return "Audio"
+
+
+# =========================================================
+# CLEANUP
+# =========================================================
+
+def cleanup_file(path):
+
+    try:
+
+        if path and os.path.exists(
+            path
+        ):
+
+            os.remove(
+                path
+            )
+
     except Exception as e:
-        print(f"AUDIO DOWNLOAD ERROR: {e}", flush=True)
-        return "❌ গান ডাউনলোড করতে সমস্যা হয়েছে।"
-    
-    return {
-        "type": "audio",
-        "path": file_path,
-        "title": title,
-        "cleanup": lambda: os.remove(file_path) if os.path.exists(file_path) else None
-    }
+
+        print(
+            f"⚠️ FILE CLEANUP ERROR: {e}",
+            flush=True
+        )
+
+
+# =========================================================
+# PLAY
+# =========================================================
+
+def play(args, ctx):
+
+    if not args:
+
+        return (
+            "🎵 MUSIC PLAYER\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "Usage:\n"
+            ".play song name\n\n"
+            "Example:\n"
+            ".play Tere Liye Atif Aslam"
+        )
+
+
+    query = " ".join(args).strip()
+
+
+    if not query:
+
+        return (
+            "❌ Please enter a song name."
+        )
+
+
+    print(
+        f"🎵 Downloading: {query}",
+        flush=True
+    )
+
+
+    try:
+
+        path = download_audio(
+            query
+        )
+
+        title = get_title(
+            path
+        )
+
+
+        print(
+            f"✅ Audio downloaded: "
+            f"{path}",
+            flush=True
+        )
+
+
+        # -------------------------------------------------
+        # Main.py will handle the actual send
+        # -------------------------------------------------
+
+        return {
+
+            "type": "audio",
+
+            "path": path,
+
+            "title": title,
+
+            "cleanup": lambda:
+                cleanup_file(path)
+        }
+
+
+    except Exception as e:
+
+        print(
+            f"❌ PLAY ERROR: {e}",
+            flush=True
+        )
+
+
+        return (
+            "❌ গানটি download করা যায়নি.\n\n"
+            f"🎵 Requested: {query}\n"
+            "⚠️ অন্য গান বা supported URL দিয়ে চেষ্টা করো."
+        )
+
+
+# =========================================================
+# SONG
+# =========================================================
+
+def song(args, ctx):
+
+    return play(
+        args,
+        ctx
+    )
+
+
+# =========================================================
+# MUSIC
+# =========================================================
+
+def music(args, ctx):
+
+    return play(
+        args,
+        ctx
+    )
+
+
+# =========================================================
+# COMMANDS
+# =========================================================
 
 MEDIA_COMMANDS = {
+
     "play": play,
-    "song": play,
-    "music": play,
-}
+
+    "song": song,
+
+    "music": music
+    }
