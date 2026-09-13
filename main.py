@@ -1,765 +1,370 @@
-import os
-import time
-import threading
-import traceback
-import urllib.parse
-import json
-
+import os,time,json,threading,traceback,urllib.parse
 from flask import Flask
 from instagrapi import Client
-from commands import COMMANDS, BOT_NAME
-from commands.downloader import auto_detect, download_video
+from commands import COMMANDS,BOT_NAME
+from commands.downloader import auto_detect,download_video
+
+try:
+    from commands.media import select_song,download_selected_song
+except Exception as e:
+    print(f"MEDIA LOAD ERR: {e}",flush=True)
+    select_song=download_selected_song=None
+
+app=Flask(__name__)
+PREFIX=os.getenv("BOT_PREFIX",".")
+START_TIME=time.time()
+BOT_RUNNING=False
+BOT_USERNAME="Unknown"
+TEACH_FILE="bby_teachings.json"
 
 
-app = Flask(__name__)
-
-PREFIX = os.getenv("BOT_PREFIX", ".")
-START_TIME = time.time()
-BOT_RUNNING = False
-BOT_USERNAME = "Unknown"
-
-
-# =========================================================
-# YOUTUBE COOKIES
-# =========================================================
-
-def setup_youtube_cookies():
-    paths = [
-        "/etc/secrets/cookies.txt",
-        os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "cookies.txt"
-        ),
-        "cookies.txt"
-    ]
-
-    for path in paths:
+def cookies():
+    for p in ["/etc/secrets/cookies.txt",
+              os.path.join(os.path.dirname(__file__),"cookies.txt"),
+              "cookies.txt"]:
         try:
-            if os.path.isfile(path):
-                size = os.path.getsize(path)
-
-                if size > 0:
-                    os.environ["YTDLP_COOKIES"] = path
-
-                    print(
-                        f"🍪 YouTube cookies: LOADED → {path}",
-                        flush=True
-                    )
-                    print(
-                        f"🍪 Cookie size: {size} bytes",
-                        flush=True
-                    )
-
-                    return path
-
-        except Exception as e:
-            print(
-                "COOKIE CHECK ERROR:",
-                e,
-                flush=True
-            )
-
-    print(
-        "⚠️ YouTube cookies not found",
-        flush=True
-    )
-
+            if os.path.isfile(p) and os.path.getsize(p)>0:
+                os.environ["YTDLP_COOKIES"]=p
+                print(f"🍪 YouTube Cookies: LOADED",flush=True)
+                return p
+        except: pass
+    print("⚠️ YouTube Cookies: MISSING",flush=True)
     return None
 
 
-COOKIE_FILE = setup_youtube_cookies()
+COOKIE_FILE=cookies()
 
 
-# =========================================================
-# TEACH SYSTEM
-# =========================================================
-
-TEACH_FILE = "bby_teachings.json"
-TEACHINGS = {}
-
-
-def load_teachings():
+def load_teach():
     try:
-        if not os.path.exists(TEACH_FILE):
-            print(
-                "⚠️ bby_teachings.json not found",
-                flush=True
-            )
-            return {}
-
-        with open(
-            TEACH_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
-            data = json.load(f)
-
-        if isinstance(data, dict):
-            return data
-
-        if isinstance(data, list):
-            result = {}
-
-            for item in data:
-                if isinstance(item, dict):
-                    q = item.get("question")
-                    a = item.get("answer")
-
-                    if q and a:
-                        result[str(q)] = str(a)
-
-            return result
-
-        return {}
-
+        if not os.path.exists(TEACH_FILE): return {}
+        with open(TEACH_FILE,"r",encoding="utf-8") as f:
+            d=json.load(f)
+        if isinstance(d,dict): return d
+        r={}
+        for x in d if isinstance(d,list) else []:
+            if isinstance(x,dict) and x.get("question") and x.get("answer"):
+                r[str(x["question"])]=str(x["answer"])
+        return r
     except Exception as e:
-        print(
-            "TEACH LOAD ERR:",
-            e,
-            flush=True
-        )
+        print(f"TEACH LOAD ERR: {e}",flush=True)
         return {}
 
 
-def save_teachings():
-    try:
-        with open(
-            TEACH_FILE,
-            "w",
-            encoding="utf-8"
-        ) as f:
-            json.dump(
-                TEACHINGS,
-                f,
-                ensure_ascii=False,
-                indent=2
-            )
+TEACHINGS=load_teach()
 
+
+def save_teach():
+    try:
+        with open(TEACH_FILE,"w",encoding="utf-8") as f:
+            json.dump(TEACHINGS,f,ensure_ascii=False,indent=2)
         return True
-
     except Exception as e:
-        print(
-            "TEACH SAVE ERR:",
-            e,
-            flush=True
-        )
+        print(f"TEACH SAVE ERR: {e}",flush=True)
         return False
 
 
-TEACHINGS.update(load_teachings())
+def norm(s):
+    if not s:return ""
+    s=" ".join(str(s).strip().lower().split())
+    for c in "!?।,.;:'\"“”‘’`~":
+        s=s.replace(c,"")
+    return s.strip()
 
 
-def normalize_text(text):
-    if not text:
-        return ""
-
-    text = str(text).strip().lower()
-    text = " ".join(text.split())
-
-    punctuation = "!?।,.;:'\"“”‘’`~"
-
-    for char in punctuation:
-        text = text.replace(char, "")
-
-    return text.strip()
-
-
-def teach_command(text):
-    learned = []
-    failed = []
-
+def teach(text):
+    ok=0
     for line in text.splitlines():
-        line = line.strip()
-
-        if not line.lower().startswith(
-            ".bby teach "
-        ):
-            continue
-
-        data = line[len(".bby teach "):].strip()
-
-        if " - " not in data:
-            failed.append(line)
-            continue
-
-        q, a = data.split(" - ", 1)
-
-        q = normalize_text(q)
-        a = a.strip()
-
-        if not q or not a:
-            failed.append(line)
-            continue
-
-        TEACHINGS[q] = a
-        learned.append((q, a))
-
-    if not learned:
-        return (
-            "🥹 ঠিকভাবে teach করা হয়নি!\n\n"
-            "Example:\n"
-            ".bby teach hi - hello"
-        )
-
-    if not save_teachings():
-        return "❌ Teach save করতে পারলাম না!"
-
-    out = [
-        f"🥹 {len(learned)}টা কথা শিখে নিলাম! ❤️",
-        ""
-    ]
-
-    for q, a in learned:
-        out.append(
-            f"👤 {q} → 🤖 {a}"
-        )
-
-    if failed:
-        out += [
-            "",
-            f"⚠️ {len(failed)}টা line বাদ গেছে।"
-        ]
-
-    return "\n".join(out)
+        if not line.lower().startswith(".bby teach "):continue
+        x=line[11:].strip()
+        if " - " not in x:continue
+        q,a=x.split(" - ",1)
+        q=norm(q);a=a.strip()
+        if q and a:
+            TEACHINGS[q]=a
+            ok+=1
+    if not ok:
+        return "🥹 ঠিকভাবে teach করা হয়নি!\n\nExample:\n.bby teach hi - hello"
+    if not save_teach():
+        return "❌ Teach save করা যায়নি!"
+    return f"🥹 {ok}টা কথা শিখে নিলাম! ❤️"
 
 
-def taught_reply(text):
-    if not TEACHINGS:
-        return None
-
-    clean_text = normalize_text(text)
-
-    if not clean_text:
-        return None
-
-    if clean_text in TEACHINGS:
-        return TEACHINGS[clean_text]
-
-    for question, answer in TEACHINGS.items():
-        clean_question = normalize_text(question)
-
-        if clean_question and clean_text == clean_question:
-            return answer
-
-    for question, answer in TEACHINGS.items():
-        clean_question = normalize_text(question)
-
-        if (
-            clean_question
-            and len(clean_question) >= 3
-            and clean_question in clean_text
-        ):
-            return answer
-
+def taught(text):
+    q=norm(text)
+    if not q:return None
+    if q in TEACHINGS:return TEACHINGS[q]
+    for k,v in TEACHINGS.items():
+        k=norm(k)
+        if len(k)>=3 and k in q:return v
     return None
 
 
-# =========================================================
-# FLASK
-# =========================================================
-
 @app.route("/")
 def home():
-    return (
-        f"🐐 {BOT_NAME} LIVE! "
-        f"@{BOT_USERNAME}"
-    )
+    return f"🐐 {BOT_NAME} LIVE! @{BOT_USERNAME}"
 
 
 @app.route("/health")
 def health():
     return {
-        "status": "online",
-        "bot": BOT_NAME,
-        "username": BOT_USERNAME,
-        "running": BOT_RUNNING,
-        "ai": "OFF",
-        "taught": len(TEACHINGS),
-        "youtube_cookies": bool(COOKIE_FILE)
+        "status":"online",
+        "bot":BOT_NAME,
+        "username":BOT_USERNAME,
+        "running":BOT_RUNNING,
+        "ai":"OFF",
+        "taught":len(TEACHINGS),
+        "youtube_cookies":bool(COOKIE_FILE),
+        "music":bool(select_song)
     }
 
 
-# =========================================================
-# SEND TEXT
-# =========================================================
+def ctx(cl,msg,thread):
+    try:u=cl.user_info(int(msg.user_id))
+    except:u=None
+    return {
+        "client":cl,
+        "user":u,
+        "user_id":str(msg.user_id),
+        "username":getattr(u,"username","Unknown") if u else "Unknown",
+        "full_name":getattr(u,"full_name","Unknown") if u else "Unknown",
+        "profile_pic_url":str(getattr(u,"profile_pic_url","")) if u else "",
+        "followers":getattr(u,"follower_count",0) if u else 0,
+        "following":getattr(u,"following_count",0) if u else 0,
+        "posts":getattr(u,"media_count",0) if u else 0,
+        "bio":getattr(u,"biography","") if u else "",
+        "start_time":START_TIME,
+        "thread_id":thread.id,
+        "thread":thread,
+        "message":msg
+    }
 
-def send_text(cl, tid, text):
-    if not text:
-        return
 
-    if isinstance(text, dict) and "photo" in text:
+def send(cl,tid,text):
+    if text is None:return
+    if isinstance(text,dict) and text.get("photo"):
         try:
-            cl.direct_send_photo(
-                text["photo"],
-                thread_ids=[tid]
-            )
-
+            cl.direct_send_photo(text["photo"],thread_ids=[tid])
             if text.get("caption"):
-                cl.direct_send(
-                    text["caption"],
-                    thread_ids=[tid]
-                )
-
+                cl.direct_send(text["caption"],thread_ids=[tid])
             return
-
-        except Exception as e:
-            print(
-                "PHOTO ERR:",
-                e,
-                flush=True
-            )
-
-            text = text.get(
-                "caption",
-                "❌ Photo fail"
-            )
-
-    text = str(text)
-
-    for i in range(0, len(text), 1800):
+        except:
+            text=text.get("caption","❌ Photo failed")
+    text=str(text)
+    for i in range(0,len(text),1800):
         try:
-            cl.direct_send(
-                text[i:i + 1800],
-                thread_ids=[tid]
-            )
-
-            time.sleep(0.5)
-
+            cl.direct_send(text[i:i+1800],thread_ids=[tid])
+            time.sleep(.3)
         except Exception as e:
-            print(
-                "SEND ERR:",
-                e,
-                flush=True
-            )
+            print(f"SEND ERR: {e}",flush=True)
 
 
-# =========================================================
-# USER
-# =========================================================
-
-def get_user(cl, uid):
-    try:
-        return cl.user_info(int(uid))
-    except Exception:
-        return None
-
-
-def user_data(u):
-    if not u:
-        return None
-
-    return {
-        "user_id": str(u.pk),
-        "username": u.username,
-        "full_name": u.full_name,
-        "profile_pic_url": str(u.profile_pic_url),
-        "followers": u.follower_count,
-        "following": u.following_count,
-        "posts": u.media_count,
-        "bio": u.biography
-    }
-
-
-def make_context(cl, msg, thread):
-    u = get_user(cl, msg.user_id)
-
-    return {
-        "client": cl,
-        "user": u,
-        "user_id": str(msg.user_id),
-
-        "username": (
-            getattr(u, "username", "Unknown")
-            if u else "Unknown"
-        ),
-
-        "full_name": (
-            getattr(u, "full_name", "Unknown")
-            if u else "Unknown"
-        ),
-
-        "profile_pic_url": (
-            str(
-                getattr(
-                    u,
-                    "profile_pic_url",
-                    ""
-                )
-            )
-            if u else ""
-        ),
-
-        "followers": (
-            getattr(
-                u,
-                "follower_count",
-                0
-            )
-            if u else 0
-        ),
-
-        "following": (
-            getattr(
-                u,
-                "following_count",
-                0
-            )
-            if u else 0
-        ),
-
-        "posts": (
-            getattr(
-                u,
-                "media_count",
-                0
-            )
-            if u else 0
-        ),
-
-        "bio": (
-            getattr(
-                u,
-                "biography",
-                ""
-            )
-            if u else ""
-        ),
-
-        "start_time": START_TIME,
-        "thread_id": thread.id,
-        "thread": thread,
-        "message": msg,
-        "replied_user": None
-    }
-
-
-# =========================================================
-# VIDEO SEND
-# =========================================================
-
-def send_downloaded_video(cl, tid, path):
+def send_video(cl,tid,path):
     if not path or not os.path.exists(path):
-        send_text(
-            cl,
-            tid,
-            "❌ Download failed! Private video hote pare!"
-        )
+        send(cl,tid,"❌ Video download failed!")
         return
-
     try:
-        if os.path.getsize(path) > 90 * 1024 * 1024:
-            send_text(
-                cl,
-                tid,
-                "❌ 90MB+ besi, pathano jabena!"
-            )
+        if os.path.getsize(path)>90*1024*1024:
+            send(cl,tid,"❌ Video 90MB-এর বেশি!")
             return
-
-        cl.direct_send_video(
-            path,
-            thread_ids=[tid]
-        )
-
+        cl.direct_send_video(path,thread_ids=[tid])
     except Exception as e:
-        print(
-            "VIDEO SEND ERROR:",
-            e,
-            flush=True
-        )
+        print(f"VIDEO SEND ERR: {e}",flush=True)
+        send(cl,tid,"❌ Video send failed!")
+    finally:
+        try:os.remove(path)
+        except:pass
 
-        send_text(
-            cl,
-            tid,
-            "❌ Video send failed!"
-        )
 
+def send_audio(cl,tid,r):
+    if not isinstance(r,dict):
+        send(cl,tid,r);return
+    p=r.get("path")
+    if not p or not os.path.exists(p):
+        send(cl,tid,"❌ Audio file পাওয়া যায়নি!")
+        return
+    try:
+        if os.path.getsize(p)>90*1024*1024:
+            send(cl,tid,"❌ Audio 90MB-এর বেশি!")
+            return
+        print(f"🎵 Sending: {r.get('title','Song')}",flush=True)
+        if hasattr(cl,"direct_send_file"):
+            cl.direct_send_file(p,thread_ids=[tid])
+        elif hasattr(cl,"direct_send_audio"):
+            cl.direct_send_audio(p,thread_ids=[tid])
+        else:
+            raise Exception("Audio method unavailable")
+        print("✅ AUDIO SENT",flush=True)
+    except Exception as e:
+        print(f"AUDIO SEND ERR: {e}",flush=True)
+        send(cl,tid,"❌ গান পাঠানো যায়নি!")
     finally:
         try:
-            os.remove(path)
-        except Exception:
-            pass
+            if r.get("cleanup"):r["cleanup"]()
+            elif os.path.exists(p):os.remove(p)
+        except:pass
 
 
-# =========================================================
-# PROCESS MESSAGE
-# =========================================================
+def song_number(cl,thread,msg):
+    if not select_song or not download_selected_song:return False
+    text=(getattr(msg,"text","") or "").strip()
+    if not text.isdigit():return False
+    n=int(text)
+    if n<1 or n>5:return False
 
-def process_message(cl, thread, msg):
-    text = (
-        getattr(msg, "text", "") or ""
-    ).strip()
+    try:
+        r=select_song(n,ctx(cl,msg,thread))
+    except Exception as e:
+        print(f"SONG SELECT ERR: {e}",flush=True)
+        return False
 
-    if not text:
+    if r is None:return False
+
+    tid=thread.id
+
+    if isinstance(r,str):
+        send(cl,tid,r)
+        return True
+
+    if not isinstance(r,dict):
+        send(cl,tid,"❌ Song selection failed!")
+        return True
+
+    send(cl,tid,"⏳ গান download হচ্ছে... 🎵")
+
+    try:
+        r=download_selected_song(r)
+    except Exception as e:
+        print(f"SONG DOWNLOAD ERR: {e}",flush=True)
+        send(cl,tid,"❌ গান download করা যায়নি!")
+        return True
+
+    if isinstance(r,dict) and r.get("type")=="audio":
+        send_audio(cl,tid,r)
+    else:
+        send(cl,tid,r or "❌ গান download করা যায়নি!")
+    return True
+
+
+def process(cl,thread,msg):
+    text=(getattr(msg,"text","") or "").strip()
+    if not text:return
+    tid=thread.id
+    low=text.lower()
+
+    # 1/2/3/4/5 song selection
+    if text.isdigit() and song_number(cl,thread,msg):
         return
 
-    tid = thread.id
-
-    ctx = make_context(
-        cl,
-        msg,
-        thread
-    )
-
-    low = text.lower()
-    result = None
-
-    # -----------------------------------------------------
-    # TEACH
-    # -----------------------------------------------------
-
+    # Teaching
     if low.startswith(".bby teach "):
-        result = teach_command(text)
-
-        send_text(
-            cl,
-            tid,
-            result
-        )
-
+        send(cl,tid,teach(text))
         return
 
-    # -----------------------------------------------------
-    # TAUGHT REPLY
-    # -----------------------------------------------------
-
-    result = taught_reply(text)
-
-    if result is not None:
-        print(
-            f"🧠 TAUGHT REPLY: "
-            f"{text} -> {result}",
-            flush=True
-        )
-
-        send_text(
-            cl,
-            tid,
-            result
-        )
-
+    # Learned reply
+    r=taught(text)
+    if r is not None:
+        print(f"🧠 TAUGHT: {text}",flush=True)
+        send(cl,tid,r)
         return
 
-    # -----------------------------------------------------
-    # AUTO DOWNLOAD
-    # -----------------------------------------------------
-
+    # Automatic URL download
     if not text.startswith(PREFIX):
-        url = auto_detect(text)
+        try:url=auto_detect(text)
+        except:url=None
 
         if url:
             try:
-                cl.direct_send(
-                    f"⏳ Downloading...\n🔗 {url}",
-                    thread_ids=[tid]
-                )
-
-                path = download_video(
-                    url,
-                    client=cl
-                )
-
-                send_downloaded_video(
-                    cl,
-                    tid,
-                    path
-                )
-
+                send(cl,tid,f"⏳ Downloading...\n🔗 {url}")
+                p=download_video(url,client=cl)
+                send_video(cl,tid,p)
             except Exception as e:
-                print(
-                    "AUTO DL ERR:",
-                    e,
-                    flush=True
-                )
-
-                send_text(
-                    cl,
-                    tid,
-                    "❌ Download failed!"
-                )
-
+                print(f"AUTO DL ERR: {e}",flush=True)
+                send(cl,tid,"❌ Download failed!")
             return
 
-    # -----------------------------------------------------
-    # NORMAL COMMANDS
-    # -----------------------------------------------------
+    # Normal commands
+    if low in ("hi","hello","hey"):
+        cmd=COMMANDS.get("hi")
+        if cmd:
+            try:r=cmd([],ctx(cl,msg,thread))
+            except:r="❌ Command error."
+        else:r="Hello! ❤️"
 
-    if low in ("hi", "hello", "hey"):
-        command = COMMANDS.get("hi")
-
-        if command:
-            try:
-                result = command([], ctx)
-            except Exception:
-                traceback.print_exc()
-                result = "❌ Command error."
-        else:
-            result = "Hello! ❤️"
-
-    elif low in ("menu", "help"):
-        command = COMMANDS.get("menu")
-
-        if command:
-            try:
-                result = command([], ctx)
-            except Exception:
-                traceback.print_exc()
-                result = "❌ Command error."
-        else:
-            result = "❌ Menu command পাওয়া যায়নি।"
+    elif low in ("menu","help"):
+        cmd=COMMANDS.get("menu")
+        if cmd:
+            try:r=cmd([],ctx(cl,msg,thread))
+            except:r="❌ Command error."
+        else:r="❌ Menu পাওয়া যায়নি!"
 
     elif text.startswith(PREFIX):
-        body = text[len(PREFIX):].strip()
-
+        body=text[len(PREFIX):].strip()
         if not body:
-            command = COMMANDS.get("menu")
-
-            if command:
-                try:
-                    result = command([], ctx)
-                except Exception:
-                    traceback.print_exc()
-                    result = "❌ Command error."
-            else:
-                result = "❌ Menu command পাওয়া যায়নি।"
-
+            cmd=COMMANDS.get("menu")
+            if cmd:
+                try:r=cmd([],ctx(cl,msg,thread))
+                except:r="❌ Command error."
+            else:r="❌ Menu পাওয়া যায়নি!"
         else:
-            parts = body.split()
-
-            cmd = parts[0].lower()
-            args = parts[1:]
-
-            if cmd in COMMANDS:
-                try:
-                    result = COMMANDS[cmd](
-                        args,
-                        ctx
-                    )
-                except Exception:
-                    traceback.print_exc()
-                    result = "❌ Command error."
-            else:
-                result = f"❌ Unknown: {cmd}"
-
-    # -----------------------------------------------------
-    # GEMINI OFF
-    # -----------------------------------------------------
-
-    if result is None:
-        print(
-            f"ℹ️ No taught reply for: {text}",
-            flush=True
-        )
+            parts=body.split()
+            name=parts[0].lower()
+            args=parts[1:]
+            cmd=COMMANDS.get(name)
+            if not cmd:
+                send(cl,tid,f"❌ Unknown command: {name}")
+                return
+            try:r=cmd(args,ctx(cl,msg,thread))
+            except Exception as e:
+                print(f"COMMAND ERR: {e}",flush=True)
+                r="❌ Command error."
+    else:
+        print(f"ℹ️ No taught reply for: {text}",flush=True)
         return
 
-    # -----------------------------------------------------
-    # AUDIO
-    # -----------------------------------------------------
+    if isinstance(r,dict) and r.get("type")=="audio":
+        send_audio(cl,tid,r)
+    elif isinstance(r,dict) and r.get("type")=="video":
+        send_video(cl,tid,r.get("path"))
+    else:
+        send(cl,tid,r)
 
-    if (
-        isinstance(result, dict)
-        and result.get("type") == "audio"
-    ):
-        try:
-            if result.get("path"):
-                cl.direct_send_file(
-                    result["path"],
-                    thread_ids=[tid]
-                )
-        finally:
-            try:
-                if result.get("cleanup"):
-                    result["cleanup"]()
-            except Exception:
-                pass
-
-        return
-
-    # -----------------------------------------------------
-    # VIDEO
-    # -----------------------------------------------------
-
-    if (
-        isinstance(result, dict)
-        and result.get("type") == "video"
-    ):
-        send_downloaded_video(
-            cl,
-            tid,
-            result.get("path")
-        )
-        return
-
-    send_text(
-        cl,
-        tid,
-        result
-    )
-
-
-# =========================================================
-# BOT
-# =========================================================
 
 def run_bot():
-    global BOT_RUNNING
-    global BOT_USERNAME
+    global BOT_RUNNING,BOT_USERNAME
 
-    sid = os.getenv("IG_SESSIONID")
-
+    sid=os.getenv("IG_SESSIONID")
     if not sid:
-        print(
-            "❌ IG_SESSIONID missing",
-            flush=True
-        )
+        print("❌ IG_SESSIONID missing",flush=True)
         return
 
-    sid = urllib.parse.unquote(
-        sid.strip().strip('"').strip("'")
-    )
+    sid=urllib.parse.unquote(sid.strip().strip('"').strip("'"))
 
     try:
-        cl = Client()
-
+        cl=Client()
         cl.login_by_sessionid(sid)
+        BOT_USERNAME=getattr(cl,"username","Unknown")
+        BOT_RUNNING=True
 
-        BOT_USERNAME = getattr(
-            cl,
-            "username",
-            "Unknown"
-        )
-
-        BOT_RUNNING = True
-
-        print(
-            f"🎉 LOGIN @{BOT_USERNAME}",
-            flush=True
-        )
-
-        print(
-            "🤖 Gemini: DISABLED",
-            flush=True
-        )
-
+        print(f"🎉 LOGIN @{BOT_USERNAME}",flush=True)
+        print("🤖 Gemini: DISABLED",flush=True)
         print(
             "🍪 YouTube Cookies:",
             "LOADED" if COOKIE_FILE else "MISSING",
             flush=True
         )
-
+        print(f"🧠 TAUGHT: {len(TEACHINGS)}",flush=True)
         print(
-            f"🧠 TAUGHT: {len(TEACHINGS)}",
+            "🎵 Music selection:",
+            "ENABLED" if select_song else "DISABLED",
             flush=True
         )
 
     except Exception as e:
-        print(
-            "LOGIN FAIL:",
-            e,
-            flush=True
-        )
+        print(f"LOGIN FAIL: {e}",flush=True)
         return
 
-    last = {}
+    last={}
 
     try:
         for t in cl.direct_threads(
@@ -767,99 +372,63 @@ def run_bot():
             thread_message_limit=25
         ):
             if t.messages:
-                last[t.id] = str(
-                    t.messages[0].id
-                )
-    except Exception:
-        pass
+                last[t.id]=str(t.messages[0].id)
+    except Exception as e:
+        print(f"INITIAL DM ERR: {e}",flush=True)
+
+    errors=0
 
     while True:
         try:
-            for thread in cl.direct_threads(
+            threads=cl.direct_threads(
                 amount=20,
                 thread_message_limit=25
-            ):
-                if not thread.messages:
+            )
+            errors=0
+
+            for thread in threads:
+                if not thread.messages:continue
+
+                msg=thread.messages[0]
+                mid=str(getattr(msg,"id",""))
+                uid=str(getattr(msg,"user_id",""))
+
+                if not mid or uid==str(cl.user_id):
                     continue
 
-                msg = thread.messages[0]
-
-                mid = str(
-                    getattr(
-                        msg,
-                        "id",
-                        ""
-                    )
-                )
-
-                if not mid:
+                if last.get(thread.id)==mid:
                     continue
 
-                if str(
-                    getattr(
-                        msg,
-                        "user_id",
-                        ""
-                    )
-                ) == str(cl.user_id):
-                    continue
+                last[thread.id]=mid
 
-                if last.get(thread.id) == mid:
-                    continue
+                text=(getattr(msg,"text","") or "").strip()
+                if not text:continue
 
-                last[thread.id] = mid
-
-                msg_text = (
-                    getattr(
-                        msg,
-                        "text",
-                        ""
-                    ) or ""
-                ).strip()
-
-                if not msg_text:
-                    continue
-
-                print(
-                    f"📩 {msg_text}",
-                    flush=True
-                )
-
-                process_message(
-                    cl,
-                    thread,
-                    msg
-                )
+                print(f"📩 {text}",flush=True)
+                process(cl,thread,msg)
 
         except Exception as e:
-            print(
-                "LOOP ERR:",
-                e,
-                flush=True
-            )
+            errors+=1
+            err=str(e)
 
-            time.sleep(5)
+            if "1404006" in err or "item_ack" in err or "403" in err:
+                wait=min(60,5+errors*5)
+                print(
+                    f"⚠️ Instagram 403/1404006 — retry {wait}s",
+                    flush=True
+                )
+                time.sleep(wait)
+            else:
+                print(f"LOOP ERR: {e}",flush=True)
+                time.sleep(8)
 
         time.sleep(3)
 
 
-# =========================================================
-# START
-# =========================================================
+threading.Thread(target=run_bot,daemon=True).start()
 
-threading.Thread(
-    target=run_bot,
-    daemon=True
-).start()
-
-
-if __name__ == "__main__":
+if __name__=="__main__":
     app.run(
         host="0.0.0.0",
-        port=int(
-            os.getenv(
-                "PORT",
-                "10000"
-            )
-        )
+        port=int(os.getenv("PORT","10000"))
         )
