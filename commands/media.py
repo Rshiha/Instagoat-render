@@ -168,10 +168,14 @@ def get_youtube_audio_by_url(
             "youtube": {
                 "player_client": [
                     "android",
-                    "web"
+                    "ios",
+                    "web",
+                    "tv"
                 ]
             }
-        }
+        },
+
+        "ignoreerrors": False
     }
 
     cookie_file = find_cookie_file()
@@ -196,14 +200,39 @@ def get_youtube_audio_by_url(
             flush=True
         )
 
-        with yt_dlp.YoutubeDL(
-            ydl_opts
-        ) as ydl:
+        try:
+            with yt_dlp.YoutubeDL(
+                ydl_opts
+            ) as ydl:
 
-            ydl.extract_info(
-                url,
-                download=True
-            )
+                ydl.extract_info(
+                    url,
+                    download=True
+                )
+
+        except Exception as first_err:
+
+            if "Requested format is not available" in str(first_err):
+
+                print(
+                    "⚠️ Format fallback: trying 'best'",
+                    flush=True
+                )
+
+                retry_opts = dict(ydl_opts)
+                retry_opts["format"] = "best"
+
+                with yt_dlp.YoutubeDL(
+                    retry_opts
+                ) as ydl:
+
+                    ydl.extract_info(
+                        url,
+                        download=True
+                    )
+
+            else:
+                raise
 
         files = glob.glob(
             os.path.join(
@@ -478,4 +507,5 @@ MEDIA_COMMANDS = {
     "play": play,
     "song": play,
     "music": play,
-    }
+        }
+    
