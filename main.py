@@ -6,6 +6,7 @@ import urllib.parse
 from flask import Flask
 from instagrapi import Client
 from commands import COMMANDS, AUTO_REPLIES, BOT_NAME
+
 app = Flask(__name__)
 PREFIX = os.environ.get("BOT_PREFIX", ".")
 START_TIME = time.time()
@@ -22,7 +23,6 @@ def health():
 
 def send_text(cl, tid, text):
     if not text: return
-    # PHOTO SYSTEM ADDED
     if isinstance(text, dict) and "photo" in text:
         try:
             cl.direct_send_photo(text["photo"], thread_ids=[tid])
@@ -47,34 +47,32 @@ def get_user(cl, uid):
 
 def make_context(cl, msg, thread):
     user = get_user(cl, msg.user_id)
-
-    # REPLY USER SYSTEM ADDED - EITAI MAIN FIX
     replied_user = None
     try:
-        # Insta te reply korle thread e 2nd message tai replied message
-        if len(thread.messages) > 1:
-            # Jodi reply hoy, ager message ta replied
-            prev_msg = thread.messages[1]
-            if str(prev_msg.user_id)!= str(cl.user_id):
-                r_user = get_user(cl, prev_msg.user_id)
-                if r_user:
-                    replied_user = {
-                        "user_id": str(r_user.pk),
-                        "username": r_user.username,
-                        "full_name": r_user.full_name,
-                        "profile_pic_url": str(r_user.profile_pic_url),
-                        "followers": r_user.follower_count,
-                        "following": r_user.following_count,
-                        "posts": r_user.media_count,
-                        "bio": r_user.biography
-                    }
+        for m in thread.messages[1:6]:
+            uid = str(getattr(m, 'user_id', ''))
+            if not uid: continue
+            if uid == str(cl.user_id): continue
+            if uid == str(msg.user_id): continue
+            r_user = get_user(cl, m.user_id)
+            if r_user:
+                replied_user = {
+                    "user_id": str(r_user.pk),
+                    "username": r_user.username,
+                    "full_name": r_user.full_name,
+                    "profile_pic_url": str(r_user.profile_pic_url),
+                    "followers": r_user.follower_count,
+                    "following": r_user.following_count,
+                    "posts": r_user.media_count,
+                    "bio": r_user.biography
+                }
+                print(f"✅ REPLIED USER FOUND: {r_user.username}", flush=True)
+                break
     except Exception as e:
-        print(f"Reply parse error: {e}")
+        print(f"Reply error {e}")
 
     return {
-        "client":cl,
-        "user":user,
-        "user_id":str(msg.user_id),
+        "client":cl,"user":user,"user_id":str(msg.user_id),
         "username":getattr(user,"username","Unknown") if user else "Unknown",
         "full_name":getattr(user,"full_name","Unknown") if user else "Unknown",
         "profile_pic_url": str(getattr(user,"profile_pic_url","")) if user else "",
@@ -82,10 +80,7 @@ def make_context(cl, msg, thread):
         "following": getattr(user,"following_count", 0) if user else 0,
         "posts": getattr(user,"media_count", 0) if user else 0,
         "bio": getattr(user,"biography","") if user else "",
-        "start_time": START_TIME,
-        "thread_id":thread.id,
-        "thread":thread,
-        "message":msg,
+        "start_time": START_TIME,"thread_id":thread.id,"thread":thread,"message":msg,
         "replied_user": replied_user
     }
 
@@ -99,7 +94,6 @@ def process_message(cl, thread, msg):
     if text.strip().isdigit():
         try:
             from commands.media import PENDING_SEARCH, get_youtube_audio_by_url
-            print(f"🔢 NUMBER SELECT: {text} | KEYS: {list(PENDING_SEARCH.keys())}", flush=True)
             if PENDING_SEARCH:
                 last_key = list(PENDING_SEARCH.keys())[-1]
                 results = PENDING_SEARCH[last_key]
@@ -110,7 +104,7 @@ def process_message(cl, thread, msg):
                     send_text(cl, tid, f"⏳ Downloading: {selected['title']}...")
                     file_path, title = get_youtube_audio_by_url(selected['id'], selected['title'])
                     if not file_path:
-                        send_text(cl, tid, "❌ ডাউনলোড Fail! Cookies Expired!")
+                        send_text(cl, tid, "❌ ডাউনলোড Fail!")
                         return
                     try: cl.direct_send_file(file_path, thread_ids=[tid])
                     finally:
@@ -119,7 +113,6 @@ def process_message(cl, thread, msg):
                     return
         except Exception as e:
             print(f"SELECT ERROR: {e}", flush=True)
-            traceback.print_exc()
 
     result = None
     if low in ("hi","hello","hey"):
@@ -180,7 +173,7 @@ def run_bot():
                 print(f"📩 DM: {msg.text}",flush=True)
                 process_message(cl,thread,msg)
         except Exception as e:
-            print(f"⚠️ DM LOOP ERROR: {e}",flush=True)
+            print(f"⚠️ LOOP ERROR: {e}",flush=True)
             time.sleep(5)
         time.sleep(3)
 
