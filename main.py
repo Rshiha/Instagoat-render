@@ -575,6 +575,9 @@ def run_bot():
             error_text = str(e)
             low_err = error_text.lower()
 
+            # 🔍 Exact error dekhar jonno — pura error print hobe
+            print(f"🔍 FULL ERROR: {repr(e)}", flush=True)
+
             if (
                 "1404006" in error_text
                 or "item_ack" in error_text
@@ -617,4 +620,4 @@ if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
         port=int(os.getenv("PORT", "10000"))
-            )
+                )
