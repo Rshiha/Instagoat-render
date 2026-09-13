@@ -3,477 +3,175 @@ import time
 import threading
 import traceback
 import urllib.parse
-
 from flask import Flask
 from instagrapi import Client
 from commands import COMMANDS, AUTO_REPLIES, BOT_NAME
 
 app = Flask(__name__)
-
 PREFIX = os.environ.get("BOT_PREFIX", ".")
 START_TIME = time.time()
-
 BOT_RUNNING = False
 BOT_USERNAME = "Unknown"
 
-
 @app.route("/")
 def home():
-    return (
-        f"🐐 {BOT_NAME} LIVE!\n"
-        f"🤖 Username: @{BOT_USERNAME}\n"
-        f"📚 Commands: {len(COMMANDS)}"
-    )
-
+    return f"🐐 {BOT_NAME} LIVE!\n🤖 Username: @{BOT_USERNAME}\n📚 Commands: {len(COMMANDS)}"
 
 @app.route("/health")
 def health():
-    return {
-        "status": "online",
-        "bot": BOT_NAME,
-        "username": BOT_USERNAME,
-        "commands": len(COMMANDS),
-        "running": BOT_RUNNING,
-        "uptime": int(time.time() - START_TIME)
-    }
+    return {"status":"online","bot":BOT_NAME,"username":BOT_USERNAME,
+            "commands":len(COMMANDS),"running":BOT_RUNNING,
+            "uptime":int(time.time()-START_TIME)}
 
-
-def send_text(cl, thread_id, text):
-    if not text:
-        return
-
-    text = str(text)
-
-    for i in range(0, len(text), 1800):
+def send_text(cl, tid, text):
+    if not text: return
+    for i in range(0, len(str(text)), 1800):
         try:
-            cl.direct_send(
-                text[i:i + 1800],
-                thread_ids=[thread_id]
-            )
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"❌ SEND ERROR: {e}", flush=True)
+            cl.direct_send(str(text)[i:i+1800], thread_ids=[tid])
+            time.sleep(.5)
+        except Exception as e: print(f"❌ SEND ERROR: {e}", flush=True)
 
-
-def get_user(cl, user_id):
-    try:
-        return cl.user_info(user_id)
+def get_user(cl, uid):
+    try: return cl.user_info(uid)
     except Exception as e:
         print(f"⚠️ USER INFO ERROR: {e}", flush=True)
         return None
 
-
 def make_context(cl, msg, thread):
     user = get_user(cl, msg.user_id)
+    return {"client":cl,"user":user,"user_id":str(msg.user_id),
+            "username":getattr(user,"username","Unknown"),
+            "thread_id":thread.id,"thread":thread,"message":msg}
 
-    return {
-        "client": cl,
-        "user": user,
-        "user_id": str(msg.user_id),
-        "username": getattr(user, "username", "Unknown"),
-        "thread_id": thread.id,
-        "thread": thread,
-        "message": msg
-    }
-
+def get_replied_message_id(msg):
+    r = getattr(msg, "reply", None)
+    if not r: return None
+    for a in ("message_id","id"):
+        v = getattr(r,a,None)
+        if v: return str(v)
+    n = getattr(r,"reply_to_message",None)
+    if n:
+        for a in ("message_id","id"):
+            v = getattr(n,a,None)
+            if v: return str(v)
+    return None
 
 def process_message(cl, thread, msg):
-
-    text = (getattr(msg, "text", "") or "").strip()
-
-    if not text:
-        return
-
-    thread_id = thread.id
-    ctx = make_context(cl, msg, thread)
+    text = (getattr(msg,"text","") or "").strip()
+    if not text: return
+    tid = thread.id
+    ctx = make_context(cl,msg,thread)
     low = text.lower()
 
-    reply = None
-
-    # AUTO REPLY
-    if low in AUTO_REPLIES:
-        reply = AUTO_REPLIES[low]
-
-    # NORMAL WORDS
-    elif low in ("hi", "hello", "hey"):
-        if "hi" in COMMANDS:
-            reply = COMMANDS["hi"]([], ctx)
-
-    elif low in ("menu", "help"):
-        if "menu" in COMMANDS:
-            reply = COMMANDS["menu"]([], ctx)
-
-    # PREFIX COMMAND
-    elif text.startswith(PREFIX):
-
-        body = text[len(PREFIX):].strip()
-
-        if not body:
-            if "menu" in COMMANDS:
-                reply = COMMANDS["menu"]([], ctx)
-
-        else:
-            parts = body.split()
-            command = parts[0].lower()
-            args = parts[1:]
-
-            if command in COMMANDS:
-
-                try:
-                    print(
-                        f"⚙️ Running: {command}",
-                        flush=True
-                    )
-
-                    reply = COMMANDS[command](
-                        args,
-                        ctx
-                    )
-
-                except Exception as e:
-
-                    print(
-                        f"❌ COMMAND ERROR [{command}]: {e}",
-                        flush=True
-                    )
-
-                    traceback.print_exc()
-
-                    reply = "❌ Command error."
-
+    # Reply to a bot message with "uns" to unsend it
+    if low == "uns":
+        target_id = get_replied_message_id(msg)
+        if not target_id:
+            send_text(cl,tid,"❌ Bot-er message-e reply kore `uns` likho.")
+            return
+        try:
+            target = cl.direct_message(tid,int(target_id))
+            if not getattr(target,"is_sent_by_viewer",False):
+                send_text(cl,tid,"❌ Sudhu bot-er nijer message unsend kora jabe.")
+            elif cl.direct_message_unsend(tid,int(target_id)):
+                print(f"🗑️ Bot message unsent: {target_id}",flush=True)
             else:
-                reply = (
-                    f"❌ Unknown command: `{command}`\n\n"
-                    f"📚 Use `{PREFIX}menu`"
-                )
-
-    if reply is None:
+                send_text(cl,tid,"❌ Message unsend kora jayni.")
+        except Exception as e:
+            print(f"❌ UNSEND ERROR: {e}",flush=True)
+            send_text(cl,tid,"❌ Message unsend kora jayni.")
         return
 
-    # AUDIO
-    if isinstance(reply, dict) and reply.get("type") == "audio":
+    result = AUTO_REPLIES.get(low)
 
+    if result is None and low in ("hi","hello","hey"):
+        result = COMMANDS.get("hi",lambda a,c:None)([],ctx)
+    elif result is None and low in ("menu","help"):
+        result = COMMANDS.get("menu",lambda a,c:None)([],ctx)
+    elif result is None and text.startswith(PREFIX):
+        body = text[len(PREFIX):].strip()
+        if not body:
+            result = COMMANDS.get("menu",lambda a,c:None)([],ctx)
+        else:
+            p = body.split()
+            cmd,args = p[0].lower(),p[1:]
+            if cmd in COMMANDS:
+                try: result = COMMANDS[cmd](args,ctx)
+                except Exception:
+                    traceback.print_exc(); result = "❌ Command error."
+            else:
+                result = f"❌ Unknown command: `{cmd}`\n\n📚 Use `{PREFIX}menu`"
+
+    if result is None: return
+
+    if isinstance(result,dict) and result.get("type")=="audio":
+        path=result.get("path"); title=result.get("title","Audio")
         try:
-            path = reply.get("path")
-            title = reply.get("title", "Audio")
-
-            if path and hasattr(cl, "direct_send_file"):
-
-                try:
-                    cl.direct_send_file(
-                        path,
-                        thread_ids=[thread_id]
-                    )
-
-                    print(
-                        f"🎵 Audio sent: {title}",
-                        flush=True
-                    )
-
-                    return
-
-                except Exception as e:
-                    print(
-                        f"⚠️ AUDIO SEND ERROR: {e}",
-                        flush=True
-                    )
-
-            send_text(
-                cl,
-                thread_id,
-                f"🎵 {title}\n⚠️ Audio send failed."
-            )
-
+            if path and hasattr(cl,"direct_send_file"):
+                cl.direct_send_file(path,thread_ids=[tid]); return
+            send_text(cl,tid,f"🎵 {title}\n⚠️ Audio send failed.")
         finally:
-
             try:
-                cleanup = reply.get("cleanup")
-
-                if cleanup:
-                    cleanup()
-
-            except Exception:
-                pass
-
+                if result.get("cleanup"): result["cleanup"]()
+            except Exception: pass
         return
 
-    # IMAGE
-    if isinstance(reply, dict) and reply.get("type") == "image":
-
+    if isinstance(result,dict) and result.get("type")=="image":
+        path=result.get("path")
         try:
-            path = reply.get("path")
-
-            if path and hasattr(cl, "direct_send_photo"):
-
-                try:
-                    cl.direct_send_photo(
-                        path,
-                        thread_ids=[thread_id]
-                    )
-
-                    print(
-                        "🖼️ Image sent.",
-                        flush=True
-                    )
-
-                    if reply.get("caption"):
-                        send_text(
-                            cl,
-                            thread_id,
-                            reply["caption"]
-                        )
-
-                    return
-
-                except Exception as e:
-                    print(
-                        f"⚠️ IMAGE SEND ERROR: {e}",
-                        flush=True
-                    )
-
-            send_text(
-                cl,
-                thread_id,
-                "🖼️ Image তৈরি হয়েছে কিন্তু send করা যায়নি."
-            )
-
+            if path and hasattr(cl,"direct_send_photo"):
+                cl.direct_send_photo(path,thread_ids=[tid])
+                if result.get("caption"): send_text(cl,tid,result["caption"])
+                return
+            send_text(cl,tid,"🖼️ Image তৈরি হয়েছে কিন্তু send করা যায়নি.")
         finally:
-
             try:
-                cleanup = reply.get("cleanup")
-
-                if cleanup:
-                    cleanup()
-
-            except Exception:
-                pass
-
+                if result.get("cleanup"): result["cleanup"]()
+            except Exception: pass
         return
 
-    # TEXT
-    send_text(
-        cl,
-        thread_id,
-        reply
-    )
-
-    print(
-        f"↩️ Sent: {str(reply)[:100]}",
-        flush=True
-    )
-
+    send_text(cl,tid,result)
 
 def run_bot():
-
-    global BOT_RUNNING
-    global BOT_USERNAME
-
-    print(
-        f"🐐 {BOT_NAME} starting...",
-        flush=True
-    )
-
-    sid = os.environ.get("IG_SESSIONID")
-
-    print(
-        f"SESSION FOUND: {bool(sid)}",
-        flush=True
-    )
-
-    if not sid:
-        print(
-            "❌ IG_SESSIONID missing.",
-            flush=True
-        )
-        return
-
-    sid = sid.strip()
-    sid = sid.strip('"').strip("'")
-
+    global BOT_RUNNING,BOT_USERNAME
+    sid=os.environ.get("IG_SESSIONID")
+    print(f"🐐 {BOT_NAME} starting... SESSION FOUND: {bool(sid)}",flush=True)
+    if not sid: return
+    sid=urllib.parse.unquote(sid.strip().strip('"').strip("'"))
     try:
-        sid = urllib.parse.unquote(sid)
-    except Exception:
-        pass
-
-    try:
-
-        cl = Client()
-
-        print(
-            "🔐 Logging into Instagram...",
-            flush=True
-        )
-
+        cl=Client()
         cl.login_by_sessionid(sid)
-
-        BOT_USERNAME = getattr(
-            cl,
-            "username",
-            "Unknown"
-        )
-
-        BOT_RUNNING = True
-
-        print(
-            f"🎉 LOGIN SUCCESS: @{BOT_USERNAME}",
-            flush=True
-        )
-
+        BOT_USERNAME=getattr(cl,"username","Unknown")
+        BOT_RUNNING=True
+        print(f"🎉 LOGIN SUCCESS: @{BOT_USERNAME}",flush=True)
     except Exception as e:
+        print(f"❌ LOGIN FAILED: {e}",flush=True); traceback.print_exc(); return
 
-        print(
-            f"❌ LOGIN FAILED: {e}",
-            flush=True
-        )
-
-        traceback.print_exc()
-
-        return
-
-    # Ignore old messages
-    last_messages = {}
-
+    last={}
     try:
-
-        for old_thread in cl.direct_threads(amount=20):
-
-            if old_thread.messages:
-
-                last_messages[
-                    old_thread.id
-                ] = str(
-                    old_thread.messages[0].id
-                )
-
-    except Exception as e:
-
-        print(
-            f"⚠️ Initial sync error: {e}",
-            flush=True
-        )
-
-    print(
-        "👂 DM listener started...",
-        flush=True
-    )
+        for t in cl.direct_threads(amount=20):
+            if t.messages: last[t.id]=str(t.messages[0].id)
+    except Exception as e: print(f"⚠️ Initial sync error: {e}",flush=True)
 
     while True:
-
         try:
-
-            threads = cl.direct_threads(
-                amount=20
-            )
-
-            for thread in threads:
-
-                try:
-
-                    if not thread.messages:
-                        continue
-
-                    msg = thread.messages[0]
-
-                    message_id = str(
-                        getattr(
-                            msg,
-                            "id",
-                            ""
-                        )
-                    )
-
-                    if not message_id:
-                        continue
-
-                    thread_id = thread.id
-
-                    sender_id = str(
-                        getattr(
-                            msg,
-                            "user_id",
-                            ""
-                        )
-                    )
-
-                    # Ignore bot's own message
-                    if sender_id == str(cl.user_id):
-                        continue
-
-                    # Ignore duplicate
-                    if last_messages.get(thread_id) == message_id:
-                        continue
-
-                    last_messages[thread_id] = message_id
-
-                    text = (
-                        getattr(
-                            msg,
-                            "text",
-                            ""
-                        )
-                        or ""
-                    ).strip()
-
-                    if not text:
-                        continue
-
-                    print(
-                        f"📩 DM: {text}",
-                        flush=True
-                    )
-
-                    print(
-                        f"🧵 Thread: {thread_id}",
-                        flush=True
-                    )
-
-                    process_message(
-                        cl,
-                        thread,
-                        msg
-                    )
-
-                except Exception as e:
-
-                    print(
-                        f"⚠️ THREAD ERROR: {e}",
-                        flush=True
-                    )
-
+            for thread in cl.direct_threads(amount=20):
+                if not thread.messages: continue
+                msg=thread.messages[0]
+                mid=str(getattr(msg,"id",""))
+                if not mid or str(getattr(msg,"user_id",""))==str(cl.user_id): continue
+                if last.get(thread.id)==mid: continue
+                last[thread.id]=mid
+                if not (getattr(msg,"text","") or "").strip(): continue
+                print(f"📩 DM: {msg.text}",flush=True)
+                process_message(cl,thread,msg)
         except Exception as e:
-
-            print(
-                f"⚠️ DM LOOP ERROR: {e}",
-                flush=True
-            )
-
-            traceback.print_exc()
-
+            print(f"⚠️ DM LOOP ERROR: {e}",flush=True); traceback.print_exc()
             time.sleep(5)
-
         time.sleep(3)
 
+threading.Thread(target=run_bot,daemon=True).start()
 
-def start_bot():
-    threading.Thread(
-        target=run_bot,
-        daemon=True
-    ).start()
-
-
-start_bot()
-
-
-if __name__ == "__main__":
-
-    port = int(
-        os.environ.get(
-            "PORT",
-            "10000"
-        )
-    )
-
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
+if __name__=="__main__":
+    app.run(host="0.0.0.0",port=int(os.environ.get("PORT","10000")))
+    
