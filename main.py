@@ -3,11 +3,15 @@ import time
 import threading
 import traceback
 import urllib.parse
-import re
+import urllib.request
+import urllib.error
+import json
+
 from flask import Flask
 from instagrapi import Client
 from commands import COMMANDS, BOT_NAME
 from commands.downloader import auto_detect, download_video
+
 
 app = Flask(__name__)
 PREFIX = os.environ.get("BOT_PREFIX", ".")
@@ -15,6 +19,111 @@ START_TIME = time.time()
 BOT_RUNNING = False
 BOT_USERNAME = "Unknown"
 
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
+
+# =========================
+# OPENAI
+# =========================
+
+def ask_openai(text, ctx=None):
+    if not OPENAI_API_KEY:
+        print("⚠️ OPENAI_API_KEY missing", flush=True)
+        return None
+
+    username = (
+        ctx.get("username", "Unknown")
+        if ctx else "Unknown"
+    )
+
+    system = """
+You are an Instagram group chatbot.
+Reply naturally, briefly and friendly.
+If the user writes Bangla/Banglish, reply in Bangla/Banglish.
+Do not reveal passwords, cookies, session IDs or API keys.
+If someone asks you to find a boyfriend or girlfriend,
+say: "Age Shihab boss ke mingle banao 😎❤️"
+Keep group-chat replies short.
+"""
+
+    payload = {
+        "model": OPENAI_MODEL,
+        "input": [
+            {
+                "role": "system",
+                "content": system
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Username: @{username}\n"
+                    f"Message: {text}"
+                )
+            }
+        ],
+        "max_output_tokens": 300
+    }
+
+    try:
+        data = json.dumps(payload).encode("utf-8")
+
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/responses",
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization":
+                    f"Bearer {OPENAI_API_KEY}"
+            },
+            method="POST"
+        )
+
+        with urllib.request.urlopen(
+            req,
+            timeout=45
+        ) as response:
+            result = json.loads(
+                response.read().decode("utf-8")
+            )
+
+        answer = result.get("output_text", "")
+        if answer:
+            return answer.strip()
+
+        for item in result.get("output", []):
+            if item.get("type") != "message":
+                continue
+
+            for content in item.get("content", []):
+                if content.get("type") == "output_text":
+                    answer = content.get("text", "")
+                    if answer:
+                        return answer.strip()
+
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8")
+        except:
+            body = str(e)
+
+        print(
+            f"❌ OPENAI HTTP {e.code}: {body}",
+            flush=True
+        )
+
+    except Exception as e:
+        print(
+            f"❌ OPENAI ERROR: {e}",
+            flush=True
+        )
+
+    return None
+
+
+# =========================
+# FLASK
+# =========================
 
 @app.route("/")
 def home():
@@ -30,6 +139,10 @@ def health():
         "running": BOT_RUNNING
     }
 
+
+# =========================
+# SEND TEXT
+# =========================
 
 def send_text(cl, tid, text):
     if not text:
@@ -51,22 +164,34 @@ def send_text(cl, tid, text):
             return
 
         except Exception as e:
-            print(f"PHOTO ERR {e}", flush=True)
-            text = text.get("caption", "❌ Photo fail")
+            print(
+                f"PHOTO ERR {e}",
+                flush=True
+            )
+            text = text.get(
+                "caption",
+                "❌ Photo fail"
+            )
 
-    txt = str(text)
+    text = str(text)
 
-    for i in range(0, len(txt), 1800):
+    for i in range(0, len(text), 1800):
         try:
             cl.direct_send(
-                txt[i:i + 1800],
+                text[i:i + 1800],
                 thread_ids=[tid]
             )
             time.sleep(0.5)
-
         except Exception as e:
-            print(f"SEND ERR {e}", flush=True)
+            print(
+                f"SEND ERR {e}",
+                flush=True
+            )
 
+
+# =========================
+# USER
+# =========================
 
 def get_user(cl, uid):
     try:
@@ -75,6 +200,28 @@ def get_user(cl, uid):
         return None
 
 
+def user_data(user):
+    if not user:
+        return None
+
+    return {
+        "user_id": str(user.pk),
+        "username": user.username,
+        "full_name": user.full_name,
+        "profile_pic_url": str(
+            user.profile_pic_url
+        ),
+        "followers": user.follower_count,
+        "following": user.following_count,
+        "posts": user.media_count,
+        "bio": user.biography
+    }
+
+
+# =========================
+# MESSAGE CONTEXT
+# =========================
+
 def make_context(cl, msg, thread):
     user = get_user(cl, msg.user_id)
     replied_user = None
@@ -82,45 +229,51 @@ def make_context(cl, msg, thread):
     try:
         reply_data = (
             getattr(msg, "reply", None)
-            or getattr(msg, "replied_to_message", None)
+            or getattr(
+                msg,
+                "replied_to_message",
+                None
+            )
         )
 
         if reply_data:
             r_uid = str(
-                getattr(reply_data, "user_id", "")
-                or getattr(reply_data, "userId", "")
+                getattr(
+                    reply_data,
+                    "user_id",
+                    ""
+                )
+                or getattr(
+                    reply_data,
+                    "userId",
+                    ""
+                )
             )
 
-            if r_uid and r_uid != str(cl.user_id):
-                r_user = get_user(cl, r_uid)
+            if (
+                r_uid
+                and r_uid != str(cl.user_id)
+            ):
+                replied_user = user_data(
+                    get_user(cl, r_uid)
+                )
 
-                if r_user:
-                    replied_user = {
-                        "user_id": str(r_user.pk),
-                        "username": r_user.username,
-                        "full_name": r_user.full_name,
-                        "profile_pic_url": str(
-                            r_user.profile_pic_url
-                        ),
-                        "followers": r_user.follower_count,
-                        "following": r_user.following_count,
-                        "posts": r_user.media_count,
-                        "bio": r_user.biography
-                    }
-
+                if replied_user:
                     print(
-                        f"✅ REPLY FOUND {r_user.username}",
+                        f"✅ REPLY FOUND "
+                        f"{replied_user['username']}",
                         flush=True
                     )
 
         if not replied_user:
-            print(
-                f"--- DEBUG {msg.text} len {len(thread.messages)}",
-                flush=True
-            )
-
             for m in thread.messages[1:20]:
-                uid = str(getattr(m, "user_id", ""))
+                uid = str(
+                    getattr(
+                        m,
+                        "user_id",
+                        ""
+                    )
+                )
 
                 if (
                     not uid
@@ -129,30 +282,24 @@ def make_context(cl, msg, thread):
                 ):
                     continue
 
-                r_user = get_user(cl, m.user_id)
+                r_user = user_data(
+                    get_user(cl, m.user_id)
+                )
 
                 if r_user:
-                    replied_user = {
-                        "user_id": str(r_user.pk),
-                        "username": r_user.username,
-                        "full_name": r_user.full_name,
-                        "profile_pic_url": str(
-                            r_user.profile_pic_url
-                        ),
-                        "followers": r_user.follower_count,
-                        "following": r_user.following_count,
-                        "posts": r_user.media_count,
-                        "bio": r_user.biography
-                    }
-
+                    replied_user = r_user
                     print(
-                        f"✅ FOUND FALLBACK {r_user.username}",
+                        f"✅ FOUND FALLBACK "
+                        f"{r_user['username']}",
                         flush=True
                     )
                     break
 
     except Exception as e:
-        print(f"Reply err {e}", flush=True)
+        print(
+            f"Reply err {e}",
+            flush=True
+        )
 
     return {
         "client": cl,
@@ -167,23 +314,45 @@ def make_context(cl, msg, thread):
             if user else "Unknown"
         ),
         "profile_pic_url": (
-            str(getattr(user, "profile_pic_url", ""))
+            str(
+                getattr(
+                    user,
+                    "profile_pic_url",
+                    ""
+                )
+            )
             if user else ""
         ),
         "followers": (
-            getattr(user, "follower_count", 0)
+            getattr(
+                user,
+                "follower_count",
+                0
+            )
             if user else 0
         ),
         "following": (
-            getattr(user, "following_count", 0)
+            getattr(
+                user,
+                "following_count",
+                0
+            )
             if user else 0
         ),
         "posts": (
-            getattr(user, "media_count", 0)
+            getattr(
+                user,
+                "media_count",
+                0
+            )
             if user else 0
         ),
         "bio": (
-            getattr(user, "biography", "")
+            getattr(
+                user,
+                "biography",
+                ""
+            )
             if user else ""
         ),
         "start_time": START_TIME,
@@ -193,6 +362,10 @@ def make_context(cl, msg, thread):
         "replied_user": replied_user
     }
 
+
+# =========================
+# VIDEO
+# =========================
 
 def send_downloaded_video(cl, tid, path):
     if not path or not os.path.exists(path):
@@ -229,7 +402,6 @@ def send_downloaded_video(cl, tid, path):
             f"❌ VIDEO SEND ERROR: {e}",
             flush=True
         )
-
         send_text(
             cl,
             tid,
@@ -243,9 +415,14 @@ def send_downloaded_video(cl, tid, path):
             pass
 
 
+# =========================
+# PROCESS MESSAGE
+# =========================
+
 def process_message(cl, thread, msg):
     text = (
-        getattr(msg, "text", "") or ""
+        getattr(msg, "text", "")
+        or ""
     ).strip()
 
     if not text:
@@ -259,6 +436,7 @@ def process_message(cl, thread, msg):
     )
 
     low = text.lower()
+    result = None
 
     # AUTO DOWNLOADER
     if not text.startswith(PREFIX):
@@ -271,8 +449,6 @@ def process_message(cl, thread, msg):
                     thread_ids=[tid]
                 )
 
-                # IMPORTANT:
-                # Logged-in Instagram client is passed here.
                 path = download_video(
                     a_url,
                     client=cl
@@ -289,11 +465,15 @@ def process_message(cl, thread, msg):
                     f"AUTO DL ERR: {e}",
                     flush=True
                 )
+                send_text(
+                    cl,
+                    tid,
+                    "❌ Download failed!"
+                )
 
             return
 
-    result = None
-
+    # NORMAL COMMANDS
     if low in ("hi", "hello", "hey"):
         result = COMMANDS.get(
             "hi",
@@ -316,9 +496,9 @@ def process_message(cl, thread, msg):
             )([], ctx)
 
         else:
-            p = body.split()
-            cmd = p[0].lower()
-            args = p[1:]
+            parts = body.split()
+            cmd = parts[0].lower()
+            args = parts[1:]
 
             if cmd in COMMANDS:
                 try:
@@ -326,18 +506,31 @@ def process_message(cl, thread, msg):
                         args,
                         ctx
                     )
-
                 except:
                     traceback.print_exc()
                     result = "❌ Command error."
-
             else:
                 result = f"❌ Unknown: {cmd}"
 
-    if result is None:
-        return
+    # =====================
+    # AI FALLBACK
+    # =====================
 
-    # AUDIO RESULT
+    if result is None:
+        print(
+            f"🤖 AI MESSAGE: {text}",
+            flush=True
+        )
+
+        result = ask_openai(
+            text,
+            ctx
+        )
+
+        if result is None:
+            return
+
+    # AUDIO
     if (
         isinstance(result, dict)
         and result.get("type") == "audio"
@@ -348,17 +541,15 @@ def process_message(cl, thread, msg):
                     result["path"],
                     thread_ids=[tid]
                 )
-
         finally:
             try:
                 if result.get("cleanup"):
                     result["cleanup"]()
             except:
                 pass
-
         return
 
-    # VIDEO RESULT
+    # VIDEO
     if (
         isinstance(result, dict)
         and result.get("type") == "video"
@@ -376,6 +567,10 @@ def process_message(cl, thread, msg):
         result
     )
 
+
+# =========================
+# BOT
+# =========================
 
 def run_bot():
     global BOT_RUNNING
@@ -418,6 +613,17 @@ def run_bot():
             flush=True
         )
 
+        if OPENAI_API_KEY:
+            print(
+                "🤖 OPENAI API KEY: LOADED",
+                flush=True
+            )
+        else:
+            print(
+                "⚠️ OPENAI API KEY: MISSING",
+                flush=True
+            )
+
     except Exception as e:
         print(
             f"LOGIN FAIL {e}",
@@ -436,7 +642,6 @@ def run_bot():
                 last[t.id] = str(
                     t.messages[0].id
                 )
-
     except:
         pass
 
@@ -469,7 +674,8 @@ def run_bot():
                             "user_id",
                             ""
                         )
-                    ) == str(cl.user_id)
+                    )
+                    == str(cl.user_id)
                 ):
                     continue
 
@@ -483,7 +689,8 @@ def run_bot():
                         msg,
                         "text",
                         ""
-                    ) or ""
+                    )
+                    or ""
                 ).strip():
                     continue
 
@@ -508,6 +715,10 @@ def run_bot():
         time.sleep(3)
 
 
+# =========================
+# START
+# =========================
+
 threading.Thread(
     target=run_bot,
     daemon=True
@@ -523,4 +734,4 @@ if __name__ == "__main__":
                 "10000"
             )
         )
-    )
+                )
