@@ -121,12 +121,13 @@ def make_context(cl, msg, thread_id):
         )
 
     return {
-        "client": cl,
-        "user": user,
-        "user_id": str(msg.user_id),
-        "username": username,
-        "thread_id": thread_id,
-        "message": msg
+    "client": cl,
+    "user": user,
+    "user_id": str(msg.user_id),
+    "username": username,
+    "thread_id": thread_id,
+    "thread": thread,
+    "message": msg
     }
 
 
