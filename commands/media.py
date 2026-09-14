@@ -2,12 +2,144 @@ import os
 import glob
 import uuid
 import shutil
+import requests
 import yt_dlp
 
 DOWNLOAD_DIR = "/tmp/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 PENDING_SEARCH = {}
+
+JIOSAAVN_API = "https://saavn.dev/api/search/songs"
+
+
+# =========================================================
+# JIOSAAVN SEARCH (PRIMARY)
+# =========================================================
+
+def get_jiosaavn_results(song_name, limit=5):
+
+    try:
+        response = requests.get(
+            JIOSAAVN_API,
+            params={
+                "query": song_name,
+                "limit": limit
+            },
+            timeout=10
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        songs = (
+            data.get("data", {})
+            .get("results", [])
+        )
+
+        results = []
+
+        for song in songs:
+
+            title = song.get(
+                "name",
+                "Unknown"
+            )
+
+            download_links = song.get(
+                "downloadUrl",
+                []
+            )
+
+            if not download_links:
+                continue
+
+            best_url = download_links[-1].get(
+                "url"
+            ) or download_links[-1].get(
+                "link"
+            )
+
+            if not best_url:
+                continue
+
+            results.append({
+                "source": "jiosaavn",
+                "title": title,
+                "download_url": best_url
+            })
+
+        return results
+
+    except Exception as e:
+
+        print(
+            f"JIOSAAVN SEARCH ERR: {e}",
+            flush=True
+        )
+
+        return []
+
+
+# =========================================================
+# DOWNLOAD JIOSAAVN SONG
+# =========================================================
+
+def download_jiosaavn_song(
+    download_url,
+    title
+):
+
+    job_id = uuid.uuid4().hex
+
+    path = os.path.join(
+        DOWNLOAD_DIR,
+        f"{job_id}.mp3"
+    )
+
+    try:
+
+        print(
+            f"🎵 Downloading (JioSaavn): {title}",
+            flush=True
+        )
+
+        response = requests.get(
+            download_url,
+            stream=True,
+            timeout=30
+        )
+
+        response.raise_for_status()
+
+        with open(path, "wb") as f:
+
+            for chunk in response.iter_content(
+                chunk_size=1024 * 64
+            ):
+
+                if chunk:
+                    f.write(chunk)
+
+        if not os.path.isfile(path):
+            return None, None
+
+        print(
+            f"✅ AUDIO READY: {path}",
+            flush=True
+        )
+
+        return path, title
+
+    except Exception as e:
+
+        print(
+            f"JIOSAAVN DOWNLOAD ERR: {e}",
+            flush=True
+        )
+
+        return None, None
 
 
 # =========================================================
@@ -331,14 +463,35 @@ def play(a, c):
     if text.isdigit():
         return None
 
-    results = get_youtube_search_results(
+    results = get_jiosaavn_results(
         text,
         limit=5
     )
 
     if not results:
+
+        print(
+            "⚠️ JioSaavn empty, falling back to YouTube",
+            flush=True
+        )
+
+        yt_results = get_youtube_search_results(
+            text,
+            limit=5
+        )
+
+        results = [
+            {
+                "source": "youtube",
+                "title": r.get("title", "Unknown"),
+                "video_id": r.get("id")
+            }
+            for r in yt_results
+        ]
+
+    if not results:
         return (
-            "❌ কোনো গান পাওয়া যায়নি!"
+            "❌ কোনো গান পাওয়া যায়নি!"
         )
 
     PENDING_SEARCH[user_id] = results
@@ -429,16 +582,15 @@ def select_song(number, c):
 
     selected = results[index]
 
-    video_id = selected.get("id")
+    source = selected.get(
+        "source",
+        "youtube"
+    )
+
     title = selected.get(
         "title",
         "Unknown"
     )
-
-    if not video_id:
-        return (
-            "❌ এই গানটির YouTube ID পাওয়া যায়নি!"
-        )
 
     # Remove pending result immediately
     # so repeated "1" does not download twice
@@ -447,8 +599,34 @@ def select_song(number, c):
         None
     )
 
+    if source == "jiosaavn":
+
+        download_url = selected.get(
+            "download_url"
+        )
+
+        if not download_url:
+            return (
+                "❌ এই গানের link পাওয়া যায়নি!"
+            )
+
+        return {
+            "type": "audio",
+            "source": "jiosaavn",
+            "download_url": download_url,
+            "title": title
+        }
+
+    video_id = selected.get("video_id")
+
+    if not video_id:
+        return (
+            "❌ এই গানটির YouTube ID পাওয়া যায়নি!"
+        )
+
     return {
         "type": "audio",
+        "source": "youtube",
         "video_id": video_id,
         "title": title
     }
@@ -471,8 +649,9 @@ def download_selected_song(
     if result.get("type") != "audio":
         return result
 
-    video_id = result.get(
-        "video_id"
+    source = result.get(
+        "source",
+        "youtube"
     )
 
     title = result.get(
@@ -480,21 +659,45 @@ def download_selected_song(
         "Unknown"
     )
 
-    if not video_id:
-        return (
-            "❌ Song ID missing!"
+    if source == "jiosaavn":
+
+        download_url = result.get(
+            "download_url"
         )
 
-    path, real_title = (
-        get_youtube_audio_by_url(
-            video_id,
-            title
+        if not download_url:
+            return (
+                "❌ Song link missing!"
+            )
+
+        path, real_title = (
+            download_jiosaavn_song(
+                download_url,
+                title
+            )
         )
-    )
+
+    else:
+
+        video_id = result.get(
+            "video_id"
+        )
+
+        if not video_id:
+            return (
+                "❌ Song ID missing!"
+            )
+
+        path, real_title = (
+            get_youtube_audio_by_url(
+                video_id,
+                title
+            )
+        )
 
     if not path:
         return (
-            "❌ গান download করা যায়নি!"
+            "❌ গান download করা যায়নি!"
         )
 
     return {
@@ -531,5 +734,5 @@ MEDIA_COMMANDS = {
     "play": play,
     "song": play,
     "music": play,
-            }
-                
+    }
+        
