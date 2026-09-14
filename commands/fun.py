@@ -1,6 +1,4 @@
 import random
-
-
 def joke(a, c):
     return random.choice([
         "😂 Ekjon bollo: Bhai, tui eto chupchap keno?\nArekjon: Mobile-er battery 1%, tai amio low power mode-e achi! 🤣",
@@ -15,7 +13,6 @@ def joke(a, c):
         "😆 Bhai, tor phone eto gorom keno?\nBattery gorom na re, amar ex-er message dekhe phone-o jealous! 😂"
     ])
 
-
 def quote(a, c):
     return random.choice([
         "✨ Jotoi tough hok, chesta korle ekdin parbei.",
@@ -27,10 +24,8 @@ def quote(a, c):
         "❤️ Nijer value bujho, sobar approval-er dorkar nei."
     ])
 
-
 def dice(a, c):
     return f"🎲 Dice roll: {random.randint(1, 6)}"
-
 
 def truth(a, c):
     return random.choice([
@@ -43,7 +38,6 @@ def truth(a, c):
         "❤️ Ekhon tomar mon-e kar kotha cholche?"
     ])
 
-
 def dare(a, c):
     return random.choice([
         "😎 Ekhon ekta funny emoji pathao.",
@@ -54,7 +48,6 @@ def dare(a, c):
         "😂 Ekhon sudhu emoji diye ekta message dao.",
         "🔥 Ekta funny status lekho."
     ])
-
 
 def ball8(a, c):
     return random.choice([
@@ -68,6 +61,32 @@ def ball8(a, c):
         "🎱 Definitely! 😎"
     ])
 
+def slap(a, c):
+    target = " ".join(a) if a else "nijeke"
+    return random.choice([
+        f"👋 {target} ke thappor marse! 💥",
+        f"🤜 BAM! {target} uray gelo! 😂",
+        f"👋 {target} thappor kheye kede dilo 😭",
+        f"💢 {target} ke ekta solid thappor! 🤣"
+    ])
+
+def love(a, c):
+    if len(a) < 2:
+        return "Format:.love Shihab Mim"
+    name1 = a[0]
+    name2 = a[1]
+    seed = (name1.lower() + name2.lower())
+    random.seed(seed)
+    percent = random.randint(5, 99)
+    random.seed()
+    if percent > 90:
+        return f"❤️ {name1} + {name2} = {percent}%\nBhai biye kobe? 😍💍"
+    elif percent > 70:
+        return f"💖 {name1} + {name2} = {percent}%\nPrem jombe! 😚"
+    elif percent > 40:
+        return f"💛 {name1} + {name2} = {percent}%\nChesta korle hobe 😏"
+    else:
+        return f"💔 {name1} + {name2} = {percent}%\nVule jao, hobe na 😂"
 
 FUN_COMMANDS = {
     "joke": joke,
@@ -75,5 +94,7 @@ FUN_COMMANDS = {
     "dice": dice,
     "truth": truth,
     "dare": dare,
-    "8ball": ball8
-      }
+    "8ball": ball8,
+    "slap": slap,
+    "love": love
+}
