@@ -95,7 +95,7 @@ def download_jiosaavn_song(
 
     path = os.path.join(
         DOWNLOAD_DIR,
-        f"{job_id}.mp3"
+        f"{job_id}.m4a"
     )
 
     try:
@@ -734,5 +734,5 @@ MEDIA_COMMANDS = {
     "play": play,
     "song": play,
     "music": play,
-            }
-    
+                            }
+        
