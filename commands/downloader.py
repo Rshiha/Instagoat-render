@@ -264,7 +264,8 @@ def download_with_ytdlp(url):
             "youtube": {
                 "player_client": [
                     "android",
-                    "ios"
+                    "ios",
+                    "web"
                 ]
             }
         }
@@ -300,6 +301,12 @@ def download_with_ytdlp(url):
 
     try:
 
+        fallback_clients = [
+            ["android"],
+            ["android", "web"],
+            ["ios"],
+        ]
+
         try:
             with yt_dlp.YoutubeDL(
                 ydl_opts
@@ -309,16 +316,16 @@ def download_with_ytdlp(url):
 
         except Exception as first_err:
 
-            if (
-                "Requested format is not available"
-                in str(first_err)
-                or "page needs to be reloaded"
-                in str(first_err)
-            ):
+            if "not available" not in str(first_err) and \
+               "reloaded" not in str(first_err):
+                raise
+
+            last_err = first_err
+
+            for clients in fallback_clients:
 
                 print(
-                    "⚠️ Format fallback: trying "
-                    "web_embedded client",
+                    f"⚠️ Format fallback: trying {clients}",
                     flush=True
                 )
 
@@ -326,21 +333,26 @@ def download_with_ytdlp(url):
                 retry_opts["format"] = "best"
                 retry_opts["extractor_args"] = {
                     "youtube": {
-                        "player_client": [
-                            "android",
-                            "web_embedded"
-                        ]
+                        "player_client": clients
                     }
                 }
 
-                with yt_dlp.YoutubeDL(
-                    retry_opts
-                ) as ydl:
+                try:
+                    with yt_dlp.YoutubeDL(
+                        retry_opts
+                    ) as ydl:
 
-                    ydl.download([url])
+                        ydl.download([url])
 
-            else:
-                raise
+                    last_err = None
+                    break
+
+                except Exception as retry_err:
+                    last_err = retry_err
+                    continue
+
+            if last_err:
+                raise last_err
 
         # Find downloaded file
         for filename in os.listdir(
