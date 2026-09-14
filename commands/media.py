@@ -168,9 +168,7 @@ def get_youtube_audio_by_url(
             "youtube": {
                 "player_client": [
                     "android",
-                    "ios",
-                    "web",
-                    "tv"
+                    "ios"
                 ]
             }
         },
@@ -221,6 +219,14 @@ def get_youtube_audio_by_url(
 
                 retry_opts = dict(ydl_opts)
                 retry_opts["format"] = "best"
+                retry_opts["extractor_args"] = {
+                    "youtube": {
+                        "player_client": [
+                            "android",
+                            "web_embedded"
+                        ]
+                    }
+                }
 
                 with yt_dlp.YoutubeDL(
                     retry_opts
@@ -507,5 +513,4 @@ MEDIA_COMMANDS = {
     "play": play,
     "song": play,
     "music": play,
-        }
-    
+                }
