@@ -1,4 +1,5 @@
 import os
+import time
 import glob
 import uuid
 import shutil
@@ -19,67 +20,75 @@ JIOSAAVN_API = "https://jiosaavn-api-dnpu.onrender.com/api/search/songs"
 
 def get_jiosaavn_results(song_name, limit=5):
 
-    try:
-        response = requests.get(
-            JIOSAAVN_API,
-            params={
-                "query": song_name,
-                "limit": limit
-            },
-            timeout=10
-        )
-
-        response.raise_for_status()
-
-        data = response.json()
-
-        songs = (
-            data.get("data", {})
-            .get("results", [])
-        )
-
-        results = []
-
-        for song in songs:
-
-            title = song.get(
-                "name",
-                "Unknown"
+    # ফ্রি-হোস্টেড JioSaavn API (Render free tier) মাঝে মাঝে cold-start/
+    # overload-এর কারণে 502/503/504 দেয়। তাই সাথে সাথে হাল ছেড়ে না দিয়ে
+    # একবার সামান্য delay দিয়ে retry করা হচ্ছে।
+    for attempt in range(2):
+        try:
+            response = requests.get(
+                JIOSAAVN_API,
+                params={
+                    "query": song_name,
+                    "limit": limit
+                },
+                timeout=10
             )
 
-            download_links = song.get(
-                "downloadUrl",
-                []
+            response.raise_for_status()
+
+            data = response.json()
+
+            songs = (
+                data.get("data", {})
+                .get("results", [])
             )
 
-            if not download_links:
+            results = []
+
+            for song in songs:
+
+                title = song.get(
+                    "name",
+                    "Unknown"
+                )
+
+                download_links = song.get(
+                    "downloadUrl",
+                    []
+                )
+
+                if not download_links:
+                    continue
+
+                best_url = download_links[-1].get(
+                    "url"
+                ) or download_links[-1].get(
+                    "link"
+                )
+
+                if not best_url:
+                    continue
+
+                results.append({
+                    "source": "jiosaavn",
+                    "title": title,
+                    "download_url": best_url
+                })
+
+            return results
+
+        except Exception as e:
+
+            print(
+                f"JIOSAAVN SEARCH ERR (attempt {attempt + 1}): {e}",
+                flush=True
+            )
+
+            if attempt == 0:
+                time.sleep(2)
                 continue
 
-            best_url = download_links[-1].get(
-                "url"
-            ) or download_links[-1].get(
-                "link"
-            )
-
-            if not best_url:
-                continue
-
-            results.append({
-                "source": "jiosaavn",
-                "title": title,
-                "download_url": best_url
-            })
-
-        return results
-
-    except Exception as e:
-
-        print(
-            f"JIOSAAVN SEARCH ERR: {e}",
-            flush=True
-        )
-
-        return []
+            return []
 
 
 # =========================================================
@@ -335,6 +344,8 @@ def get_youtube_audio_by_url(
             ["android"],
             ["android", "web"],
             ["ios"],
+            ["mweb"],
+            ["tv_embedded"],
         ]
 
         try:
@@ -386,6 +397,35 @@ def get_youtube_audio_by_url(
                 except Exception as retry_err:
                     last_err = retry_err
                     continue
+
+            # সব নির্দিষ্ট client fail করলে, একদম শেষ চেষ্টা হিসেবে
+            # কোনো player_client restriction ছাড়াই সবচেয়ে permissive
+            # format দিয়ে try করা — yt-dlp নিজে যেটা পাচ্ছে সেটাই নেবে।
+            if last_err:
+
+                print(
+                    "⚠️ Format fallback: trying unrestricted (any client)",
+                    flush=True
+                )
+
+                retry_opts = dict(ydl_opts)
+                retry_opts["format"] = "worst"
+                retry_opts.pop("extractor_args", None)
+
+                try:
+                    with yt_dlp.YoutubeDL(
+                        retry_opts
+                    ) as ydl:
+
+                        ydl.extract_info(
+                            url,
+                            download=True
+                        )
+
+                    last_err = None
+
+                except Exception as retry_err:
+                    last_err = retry_err
 
             if last_err:
                 raise last_err
@@ -468,19 +508,26 @@ def play(a, c):
         limit=5
     )
 
-    if not results:
+    # JioSaavn-এর ক্যাটালগ সীমিত (অনেক English/আঞ্চলিক/কম জনপ্রিয় গান
+    # ওখানে নেই)। আগে শুধুমাত্র JioSaavn একদম খালি ফলাফল দিলে YouTube
+    # চেক করা হতো — এখন JioSaavn-এ ৫টার কম রেজাল্ট পেলেও বাকিটা
+    # YouTube দিয়ে পূরণ করা হচ্ছে, যাতে বেশিরভাগ গানই খুঁজে পাওয়া যায়।
+    if len(results) < 5:
+
+        needed = 5 - len(results)
 
         print(
-            "⚠️ JioSaavn empty, falling back to YouTube",
+            f"⚠️ JioSaavn এ মাত্র {len(results)}টা — "
+            f"YouTube থেকে আরো {needed}টা আনা হচ্ছে",
             flush=True
         )
 
         yt_results = get_youtube_search_results(
             text,
-            limit=5
+            limit=needed
         )
 
-        results = [
+        results += [
             {
                 "source": "youtube",
                 "title": r.get("title", "Unknown"),
@@ -735,4 +782,5 @@ MEDIA_COMMANDS = {
     "song": play,
     "music": play,
                             }
-        
+
+            
