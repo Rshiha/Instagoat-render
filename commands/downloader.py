@@ -258,6 +258,15 @@ def download_with_ytdlp(url):
                 "Chrome/139.0.0.0 "
                 "Safari/537.36"
             )
+        },
+
+        "extractor_args": {
+            "youtube": {
+                "player_client": [
+                    "android",
+                    "ios"
+                ]
+            }
         }
     }
 
@@ -291,11 +300,47 @@ def download_with_ytdlp(url):
 
     try:
 
-        with yt_dlp.YoutubeDL(
-            ydl_opts
-        ) as ydl:
+        try:
+            with yt_dlp.YoutubeDL(
+                ydl_opts
+            ) as ydl:
 
-            ydl.download([url])
+                ydl.download([url])
+
+        except Exception as first_err:
+
+            if (
+                "Requested format is not available"
+                in str(first_err)
+                or "page needs to be reloaded"
+                in str(first_err)
+            ):
+
+                print(
+                    "⚠️ Format fallback: trying "
+                    "web_embedded client",
+                    flush=True
+                )
+
+                retry_opts = dict(ydl_opts)
+                retry_opts["format"] = "best"
+                retry_opts["extractor_args"] = {
+                    "youtube": {
+                        "player_client": [
+                            "android",
+                            "web_embedded"
+                        ]
+                    }
+                }
+
+                with yt_dlp.YoutubeDL(
+                    retry_opts
+                ) as ydl:
+
+                    ydl.download([url])
+
+            else:
+                raise
 
         # Find downloaded file
         for filename in os.listdir(
@@ -582,3 +627,4 @@ DOWNLOADER_COMMANDS = {
     "dl": dl_command,
     "download": dl_command
         }
+        
