@@ -1,8 +1,11 @@
-import requests, random, urllib.parse, os
+import requests
+import random
+import urllib.parse
+import os
 
 def ai_reply(text):
     prompt = f"You are a funny Bengali friend. Reply short in Banglish: {text}"
-
+    
     # 1. Pollinations - kono key lage na, unlimited
     try:
         r = requests.get(
@@ -10,7 +13,7 @@ def ai_reply(text):
             timeout=30
         )
         if r.status_code == 200 and len(r.text) > 2:
-            return r.text
+            return r.text.strip()
     except:
         pass
 
@@ -26,7 +29,9 @@ def ai_reply(text):
             timeout=10
         )
         if r.status_code == 200:
-            return r.json().get('message', {}).get('content', '')
+            msg = r.json().get('message', {}).get('content', '')
+            if msg:
+                return msg
     except:
         pass
 
@@ -37,7 +42,6 @@ def ai_reply(text):
         "Hmm bujlam re, tarpor?",
         "Ki hoise bolo na 🥲"
     ])
-
 
 def generate_pic(prompt):
     try:
