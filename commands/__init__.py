@@ -7,6 +7,9 @@ from .social import SOCIAL_COMMANDS
 from .media import MEDIA_COMMANDS
 from .extra import EXTRA_COMMANDS, AUTO_REPLIES
 from .downloader import DOWNLOADER_COMMANDS
+from .pinterest import PINTEREST_COMMANDS
+from .tiktok import TIKTOK_COMMANDS
+from .help import HELP_COMMANDS
 
 BOT_NAME = "Your Father Shihab"
 
@@ -20,3 +23,6 @@ COMMANDS.update(SOCIAL_COMMANDS)
 COMMANDS.update(MEDIA_COMMANDS)
 COMMANDS.update(EXTRA_COMMANDS)
 COMMANDS.update(DOWNLOADER_COMMANDS)
+COMMANDS.update(PINTEREST_COMMANDS)
+COMMANDS.update(TIKTOK_COMMANDS)
+COMMANDS.update(HELP_COMMANDS)
