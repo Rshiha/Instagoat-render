@@ -10,7 +10,7 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 PENDING_SEARCH = {}
 
-JIOSAAVN_API = "https://saavn.dev/api/search/songs"
+JIOSAAVN_API = "https://jiosaavn-api-dnpu.onrender.com/api/search/songs"
 
 
 # =========================================================
@@ -734,5 +734,5 @@ MEDIA_COMMANDS = {
     "play": play,
     "song": play,
     "music": play,
-    }
-        
+            }
+    
