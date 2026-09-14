@@ -3,7 +3,7 @@ import random
 import urllib.parse
 import os
 
-def ai_reply(text):
+def get_ai_reply(text):
     prompt = f"You are a funny Bengali friend. Reply short in Banglish: {text}"
     
     # 1. Pollinations - kono key lage na, unlimited
@@ -56,3 +56,4 @@ def generate_pic(prompt):
     except:
         pass
     return None
+    
