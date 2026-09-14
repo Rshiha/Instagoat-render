@@ -168,7 +168,8 @@ def get_youtube_audio_by_url(
             "youtube": {
                 "player_client": [
                     "android",
-                    "ios"
+                    "ios",
+                    "web"
                 ]
             }
         },
@@ -198,6 +199,12 @@ def get_youtube_audio_by_url(
             flush=True
         )
 
+        fallback_clients = [
+            ["android"],
+            ["android", "web"],
+            ["ios"],
+        ]
+
         try:
             with yt_dlp.YoutubeDL(
                 ydl_opts
@@ -210,10 +217,16 @@ def get_youtube_audio_by_url(
 
         except Exception as first_err:
 
-            if "Requested format is not available" in str(first_err):
+            if "not available" not in str(first_err) and \
+               "reloaded" not in str(first_err):
+                raise
+
+            last_err = first_err
+
+            for clients in fallback_clients:
 
                 print(
-                    "⚠️ Format fallback: trying 'best'",
+                    f"⚠️ Format fallback: trying {clients}",
                     flush=True
                 )
 
@@ -221,24 +234,29 @@ def get_youtube_audio_by_url(
                 retry_opts["format"] = "best"
                 retry_opts["extractor_args"] = {
                     "youtube": {
-                        "player_client": [
-                            "android",
-                            "web_embedded"
-                        ]
+                        "player_client": clients
                     }
                 }
 
-                with yt_dlp.YoutubeDL(
-                    retry_opts
-                ) as ydl:
+                try:
+                    with yt_dlp.YoutubeDL(
+                        retry_opts
+                    ) as ydl:
 
-                    ydl.extract_info(
-                        url,
-                        download=True
-                    )
+                        ydl.extract_info(
+                            url,
+                            download=True
+                        )
 
-            else:
-                raise
+                    last_err = None
+                    break
+
+                except Exception as retry_err:
+                    last_err = retry_err
+                    continue
+
+            if last_err:
+                raise last_err
 
         files = glob.glob(
             os.path.join(
@@ -513,4 +531,5 @@ MEDIA_COMMANDS = {
     "play": play,
     "song": play,
     "music": play,
-                }
+            }
+                
