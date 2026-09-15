@@ -1,59 +1,24 @@
-import requests
-import random
-import urllib.parse
-import os
+import requests, random, urllib.parse
 
 def get_ai_reply(text):
     prompt = f"You are a funny Bengali friend. Reply short in Banglish: {text}"
-    
-    # 1. Pollinations - kono key lage na, unlimited
+
+    # 1. Pollinations - key chara, model param chara (free)
     try:
-        r = requests.get(
-            f"https://text.pollinations.ai/{urllib.parse.quote(prompt)}?model=openai",
-            timeout=30
-        )
-        if r.status_code == 200 and len(r.text) > 2:
+        r = requests.get(f"https://text.pollinations.ai/{urllib.parse.quote(prompt)}", timeout=15)
+        if r.status_code == 200 and len(r.text) > 5 and "budget" not in r.text.lower():
             return r.text.strip()
-    except:
-        pass
+    except: pass
 
-    # 2. Ollama public server - no key
-    try:
-        r = requests.post(
-            "https://ollama.com/api/chat",
-            json={
-                "model": "nemotron-3-nano:30b",
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False
-            },
-            timeout=10
-        )
-        if r.status_code == 200:
-            msg = r.json().get('message', {}).get('content', '')
-            if msg:
-                return msg
-    except:
-        pass
+    # 2. Ollama free models - try 3 ta best model
+    for model_name in ["openrouter/free", "nemotron-3-nano:30b", "models/gemini-3.1-flash-lite"]:
+        try:
+            r = requests.post("https://ollama.com/api/chat",
+                json={"model": model_name, "messages": [{"role": "user", "content": prompt}], "stream": False},
+                timeout=15)
+            if r.status_code == 200:
+                msg = r.json().get('message',{}).get('content','')
+                if msg: return msg.strip()
+        except: continue
 
-    # 3. Last fallback - bot kokhono chup thakbe na
-    return random.choice([
-        "Bolo bolo shunchi 🖤",
-        "Areh tai naki? 😅 bolo",
-        "Hmm bujlam re, tarpor?",
-        "Ki hoise bolo na 🥲"
-    ])
-
-def generate_pic(prompt):
-    try:
-        seed = random.randint(1, 999999)
-        url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?seed={seed}&nologo=true&model=flux&width=1024&height=1024"
-        r = requests.get(url, timeout=40)
-        if r.status_code == 200:
-            path = f"/tmp/{seed}.jpg"
-            with open(path, 'wb') as f:
-                f.write(r.content)
-            return path
-    except:
-        pass
-    return None
-    
+    return random.choice(["Bolo bolo shunchi 🖤", "Areh tai naki? 😅 bolo", "Hmm bujlam re, tarpor?"])
