@@ -207,7 +207,6 @@ def pick_answer(answer):
 
 def taught_reply(text):
     question = normalize(text)
-
     if not question:
         return None
 
@@ -215,13 +214,19 @@ def taught_reply(text):
         return pick_answer(TEACHINGS[question])
 
     for key, answer in TEACHINGS.items():
-        key = normalize(key)
-
-        if len(key) >= 3 and key in question:
+        key_n = normalize(key)
+        if len(key_n) >= 3 and key_n in question:
             return pick_answer(answer)
 
-    return None
+    # --- AI Fallback add korlam ---
+    # Sikhano uttor na pele AI reply dibe
+    try:
+        if get_ai_reply:
+            return get_ai_reply(text)
+    except:
+        pass
 
+    return None
 
 # =========================
 # FLASK
